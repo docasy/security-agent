@@ -1,0 +1,26 @@
+# 环境变量（含 API Key，绝对不能提交）
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# ChromaDB 向量库（运行时生成）
+chroma_db/
+
+# IDE
+.vscode/
+.idea/
+
+# 临时文件
+temp/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

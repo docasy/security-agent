@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security Agent — 流程与结构详解</title>
+<style>
+  :root {
+    --bg: #0b1120; --card: #111827; --border: #1e293b;
+    --text: #e2e8f0; --text2: #94a3b8;
+    --blue: #38bdf8; --purple: #818cf8; --green: #4ade80;
+    --yellow: #fbbf24; --red: #f87171; --orange: #fb923c;
+    --teal: #2dd4bf; --pink: #f472b6;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.7; padding: 20px;
+  }
+  .container { max-width: 1300px; margin: 0 auto; }
+
+  .header {
+    text-align: center; padding: 44px 24px;
+    background: linear-gradient(135deg, #111827 0%, #0b1120 60%, #1a1028 100%);
+    border-radius: 16px; border: 1px solid var(--border); margin-bottom: 24px;
+  }
+  .header h1 { font-size: 2em; background: linear-gradient(135deg, var(--blue), var(--purple)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+  .header .sub { color: var(--text2); font-size:0.92em; margin-top:4px; }
+
+  section {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 28px 32px; margin-bottom: 22px;
+  }
+  h2 { font-size:1.25em; margin-bottom:20px; display:flex; align-items:center; gap:10px; }
+  h3 { font-size:1.05em; color: var(--blue); margin: 20px 0 10px; }
+
+  /* === SVG 图用 ASCII 容器 === */
+  .ascii-diagram {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.82em;
+    background: rgba(0,0,0,0.2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 16px;
+    line-height: 1.45;
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--text2);
+  }
+  .ascii-diagram .c-blue   { color: var(--blue); }
+  .ascii-diagram .c-purple { color: var(--purple); }
+  .ascii-diagram .c-green  { color: var(--green); }
+  .ascii-diagram .c-yellow { color: var(--yellow); }
+  .ascii-diagram .c-red    { color: var(--red); }
+  .ascii-diagram .c-orange { color: var(--orange); }
+  .ascii-diagram .c-teal   { color: var(--teal); }
+  .ascii-diagram .c-pink   { color: var(--pink); }
+  .ascii-diagram .c-dim    { color: var(--text2); opacity:0.5; }
+  .ascii-diagram .c-bold   { color: var(--text); font-weight:700; }
+
+  /* === Box Diagrams === */
+  .flow-row {
+    display: flex; align-items: center; justify-content: center;
+    flex-wrap: wrap; gap: 0; margin: 12px 0;
+  }
+  .node-box {
+    padding: 10px 16px; border-radius: 8px; text-align: center;
+    font-size: 0.84em; font-weight: 600; border: 2px solid;
+    min-width: 100px;
+  }
+  .node-box.small { font-size:0.76em; padding:6px 10px; min-width:70px; }
+  .arrow-h { margin: 0 6px; font-size:1.1em; color:var(--text2); font-weight:700; }
+  .arrow-down-center { text-align:center; color:var(--text2); font-size:1.2em; margin:4px 0; }
+
+  .node-blue   { background:rgba(56,189,248,0.1);  border-color:var(--blue);   color:var(--blue); }
+  .node-purple { background:rgba(129,140,248,0.1); border-color:var(--purple); color:var(--purple); }
+  .node-green  { background:rgba(74,222,128,0.1);  border-color:var(--green);  color:var(--green); }
+  .node-orange { background:rgba(251,146,60,0.1);  border-color:var(--orange); color:var(--orange); }
+  .node-teal   { background:rgba(45,212,191,0.1);  border-color:var(--teal);   color:var(--teal); }
+  .node-pink   { background:rgba(244,114,182,0.1); border-color:var(--pink);   color:var(--pink); }
+  .node-yellow { background:rgba(251,191,36,0.1);  border-color:var(--yellow); color:var(--yellow); }
+  .node-red    { background:rgba(248,113,113,0.1);  border-color:var(--red);    color:var(--red); }
+  .node-bright-teal { background:rgba(45,212,191,0.2); border-color:var(--teal); color:var(--teal); font-size:0.88em; padding:12px 18px; }
+
+  /* Branch */
+  .branch-container {
+    display: flex; justify-content: center; gap: 40px; margin: 10px 0;
+    flex-wrap: wrap;
+  }
+  .branch-col {
+    display: flex; flex-direction: column; align-items: center; gap: 0;
+    border: 1px dashed var(--border); border-radius: 12px; padding: 16px 20px;
+    min-width: 300px;
+  }
+  .branch-col.alert  { border-color: rgba(129,140,248,0.3); background:rgba(129,140,248,0.03); }
+  .branch-col.pentest { border-color: rgba(45,212,191,0.3); background:rgba(45,212,191,0.03); }
+  .branch-label {
+    font-size:0.82em; font-weight:700; margin-bottom:10px;
+    padding:3px 12px; border-radius:4px;
+  }
+  .branch-label.alert  { background:rgba(129,140,248,0.15); color:var(--purple); }
+  .branch-label.pentest{ background:rgba(45,212,191,0.15); color:var(--teal); }
+
+  /* Merge */
+  .merge-box {
+    border: 2px dashed var(--yellow); border-radius: 10px;
+    padding: 14px 20px; text-align: center;
+    background: rgba(251,191,36,0.03); margin: 12px 0;
+  }
+
+  table { width:100%; border-collapse:collapse; margin:12px 0; font-size:0.86em; }
+  th,td { padding:9px 14px; text-align:left; border-bottom:1px solid var(--border); }
+  th { color:var(--blue); font-weight:600; background:rgba(56,189,248,0.04); }
+  td { color:var(--text2); }
+  td:first-child { color:var(--text); font-weight:600; white-space:nowrap; }
+
+  .callout {
+    border-left:3px solid var(--yellow); background:rgba(251,191,36,0.05);
+    padding:10px 16px; border-radius:0 6px 6px 0; font-size:0.85em; margin:10px 0;
+  }
+
+  .two-col { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  @media(max-width:800px){ .two-col{grid-template-columns:1fr;} }
+
+  .footer { text-align:center; color:var(--text2); font-size:0.8em; padding:20px; opacity:0.5; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- HEADER -->
+<div class="header">
+  <h1>Security Agent — 流程与结构详解</h1>
+  <p class="sub">基于 LangGraph 的多 Agent 安全分析系统 · 全流程图解</p>
+</div>
+
+
+<!-- ===== 一、全景架构 ===== -->
+<section>
+  <h2>一、全景架构：一张图看清所有层次</h2>
+
+  <div class="ascii-diagram">
+<span class="c-dim">┌──────────────────────────────────────────────────────────────────────────┐</span>
+<span class="c-dim">│</span>                          <span class="c-bold">🔌 API 层 (FastAPI)</span>                              <span class="c-dim">│</span>
+<span class="c-dim">│</span>   <span class="c-blue">POST /analyze</span>  ─── 告警分析入口            <span class="c-teal">POST /pentest</span>  ─── 渗透测试入口   <span class="c-dim">│</span>
+<span class="c-dim">└────────────────────────────┬─────────────────────────────────────────────┘</span>
+                             │
+                             ▼
+<span class="c-dim">┌──────────────────────────────────────────────────────────────────────────┐</span>
+<span class="c-dim">│</span>                      <span class="c-bold">🧠 LangGraph 编排层</span>                                <span class="c-dim">│</span>
+<span class="c-dim">│</span>                                                                            <span class="c-dim">│</span>
+<span class="c-dim">│</span>   StateGraph(SecurityAgentState)  ── 6 节点 + 条件路由 + MemorySaver      <span class="c-dim">│</span>
+<span class="c-dim">│</span>   ┌──────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐      <span class="c-dim">│</span>
+<span class="c-dim">│</span>   <span class="c-purple">│Route │</span>  <span class="c-pink">│RAG 检索 │</span>  <span class="c-orange">│Threat分析│</span>  <span class="c-teal">│渗透扫描  │</span>  <span class="c-yellow">│响应计划  │</span>  <span class="c-green">│生成报告│</span>  <span class="c-dim">│</span>
+<span class="c-dim">│</span>   <span class="c-purple">│Entry │</span>  <span class="c-pink">│         │</span>  <span class="c-orange">│ReACT    │</span>  <span class="c-teal">│MCP工具链 │</span>  <span class="c-yellow">│P0→P3    │</span>  <span class="c-green">│Markdown│</span>  <span class="c-dim">│</span>
+<span class="c-dim">│</span>   └──────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘      <span class="c-dim">│</span>
+<span class="c-dim">│</span>                                                                            <span class="c-dim">│</span>
+<span class="c-dim">│</span>   MemorySaver ── 对话状态持久化 / 断点续传 / 人工介入暂停恢复              <span class="c-dim">│</span>
+<span class="c-dim">└────────────────────────────┬─────────────────────────────────────────────┘</span>
+                             │
+            ┌────────────────┼────────────────┐
+            ▼                ▼                ▼
+<span class="c-dim">┌───────────────┐  ┌───────────────┐  ┌───────────────┐</span>
+<span class="c-dim">│</span> <span class="c-bold">🤖 Agent 层</span>    <span class="c-dim">│</span>  <span class="c-dim">│</span> <span class="c-bold">🤖 Agent 层</span>    <span class="c-dim">│</span>  <span class="c-dim">│</span> <span class="c-bold">🤖 Agent 层</span>    <span class="c-dim">│</span>
+<span class="c-dim">│</span>               <span class="c-dim">│</span>  <span class="c-dim">│</span>               <span class="c-dim">│</span>  <span class="c-dim">│</span>               <span class="c-dim">│</span>
+<span class="c-dim">│</span> <span class="c-orange">ThreatAnalyzer</span> <span class="c-dim">│</span>  <span class="c-dim">│</span> <span class="c-teal">PentestAgent</span>   <span class="c-dim">│</span>  <span class="c-dim">│</span> <span class="c-yellow">Responder</span>      <span class="c-dim">│</span>
+<span class="c-dim">│</span> <span class="c-orange">(ReACT + VT)</span>   <span class="c-dim">│</span>  <span class="c-dim">│</span> <span class="c-teal">(MCP 编排)</span>     <span class="c-dim">│</span>  <span class="c-dim">│</span> <span class="c-yellow">(响应计划)</span>      <span class="c-dim">│</span>
+<span class="c-dim">└───────┬───────┘</span>  <span class="c-dim">└───────┬───────┘</span>  <span class="c-dim">└───────┬───────┘</span>
+        │                  │                  │
+        │           ┌──────┴──────┐           │
+        │           │             │           │
+        ▼           ▼             ▼           ▼
+<span class="c-dim">┌──────────────────────────────────────────────────────────────────┐</span>
+<span class="c-dim">│</span>                        <span class="c-bold">🔧 工具层</span>                                   <span class="c-dim">│</span>
+<span class="c-dim">│</span>                                                                      <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-teal">▎MCP 协议工具 (进程隔离)</span>         <span class="c-orange">▎传统 API 工具 (直接调用)</span>         <span class="c-dim">│</span>
+<span class="c-dim">│</span>  ┌─────────┐ ┌────────┐ ┌────────┐  ┌──────────┐ ┌───────────┐  <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-teal">│nmap     │</span> <span class="c-teal">│whatweb │</span> <span class="c-teal">│exploitdb│</span>  <span class="c-orange">│VirusTotal│</span> <span class="c-orange">│NVD CVE   │</span>  <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-teal">│4 工具   │</span> <span class="c-teal">│4 工具  │</span> <span class="c-teal">│4 工具   │</span>  <span class="c-orange">│查杀 API  │</span> <span class="c-orange">│检索 API  │</span>  <span class="c-dim">│</span>
+<span class="c-dim">│</span>  └─────────┘ └────────┘ └────────┘  └──────────┘ └───────────┘  <span class="c-dim">│</span>
+<span class="c-dim">│</span>     独立进程      独立进程     独立进程      同进程        同进程      <span class="c-dim">│</span>
+<span class="c-dim">└──────────────────────────────────────────────────────────────────┘</span>
+                             │
+                             ▼
+<span class="c-dim">┌──────────────────────────────────────────────────────────────────┐</span>
+<span class="c-dim">│</span>                       <span class="c-bold">💾 数据 & 知识层</span>                               <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-pink">ChromaDB 向量库</span>          <span class="c-pink">text-embedding-3-small</span>       <span class="c-pink">MemorySaver</span>         <span class="c-dim">│</span>
+<span class="c-dim">│</span>  ATT&CK / CVE / OWASP     Embedding 模型                  对话状态            <span class="c-dim">│</span>
+<span class="c-dim">│</span>  7 条种子知识                                                  持久化              <span class="c-dim">│</span>
+<span class="c-dim">└──────────────────────────────────────────────────────────────────┘</span>
+  </div>
+</section>
+
+
+<!-- ===== 二、双路径工作流 ===== -->
+<section>
+  <h2>二、核心：双路径 LangGraph 工作流</h2>
+  <p style="color:var(--text2);font-size:0.85em;margin-bottom:18px;">
+    整个系统最核心的设计——一个 StateGraph，两个入口，在正确的地方汇合。
+    下面是逐节点的完整流程。
+  </p>
+
+  <!-- 入口到分流 -->
+  <div class="flow-row">
+    <div class="node-box node-blue">POST /analyze<br><span style="font-weight:400;font-size:0.78em;">task_type="alert"</span></div>
+    <span class="arrow-h">↘</span>
+    <div class="node-box node-purple" style="min-width:140px;">⓪ route_entry<br><span style="font-weight:400;font-size:0.76em;">入口路由分发</span></div>
+    <span class="arrow-h">↗</span>
+    <div class="node-box node-teal">POST /pentest<br><span style="font-weight:400;font-size:0.78em;">task_type="pentest"</span></div>
+  </div>
+
+  <div class="arrow-down-center">▼ 根据 task_type 分支 ▼</div>
+
+  <!-- 两条分支 -->
+  <div class="branch-container">
+    <!-- 蓝队分支 -->
+    <div class="branch-col alert">
+      <div class="branch-label alert">🔵 路径 A：告警分析 / SOC 被动研判</div>
+      <div class="node-box node-pink">① retrieve_knowledge</div>
+      <div style="font-size:0.73em;color:var(--text2);margin:2px 0 8px;">ChromaDB 向量检索 TOP-3<br>注入安全知识到上下文</div>
+      <span class="arrow-h" style="font-size:0.8em;">↓</span>
+      <div class="node-box node-orange">② analyze_threat</div>
+      <div style="font-size:0.73em;color:var(--text2);margin:2px 0 8px;">ReACT Agent 循环<br>提取IOC→VT查杀→CVE关联→研判结论</div>
+    </div>
+
+    <!-- 红队分支 -->
+    <div class="branch-col pentest">
+      <div class="branch-label pentest">🔴 路径 B：渗透测试 / 红队主动侦察</div>
+      <div class="node-box node-teal">② run_pentest</div>
+      <div style="font-size:0.73em;color:var(--text2);margin:2px 0 8px;">PentestAgent 编排 MCP 工具链<br>nmap→whatweb→exploitdb 分步扫描<br>→ LLM 综合报告</div>
+    </div>
+  </div>
+
+  <!-- 汇合 -->
+  <div class="arrow-down-center">▼ 两条路径在此汇合 ▼</div>
+  <div class="merge-box">
+    <div style="font-size:0.85em;color:var(--yellow);font-weight:600;margin-bottom:8px;">⬆ 汇合点：两条路径共享后续节点 ⬆</div>
+    <div class="flow-row" style="justify-content:center;">
+      <div class="node-box node-yellow">③ plan_response</div>
+      <span class="arrow-h">→</span>
+      <div class="node-box node-green">④ generate_report</div>
+      <span class="arrow-h">→</span>
+      <div class="node-box node-red" style="border-style:dashed;">END</div>
+    </div>
+    <div style="font-size:0.73em;color:var(--text2);margin-top:4px;">
+      Responder 生成 P0-P3 响应时间线 → Reporter 整合为 Markdown 报告
+    </div>
+  </div>
+</section>
+
+
+<!-- ===== 三、分步详解 ===== -->
+<section>
+  <h2>三、每个节点的输入输出 —— 状态在节点间的流转</h2>
+  <p style="color:var(--text2);font-size:0.85em;margin-bottom:18px;">
+    LangGraph 的核心机制：每个节点接收完整状态 → 返回部分更新 → Graph 自动合并。
+    下面追踪一个 Dual Request（同时有告警和渗透目标）通过工作流时，状态如何变化。
+  </p>
+
+  <div class="ascii-diagram">
+<span class="c-dim">State = {</span>
+<span class="c-dim">  task_type: "alert" | "pentest",    // ← 控制走哪条路</span>
+<span class="c-dim">  alert_data: str,                    // ← 路径 A 的输入</span>
+<span class="c-dim">  target: str,                        // ← 路径 B 的输入</span>
+<span class="c-dim">  messages: [...],                    // ← 对话历史 (add reducer 追加)</span>
+<span class="c-dim">  rag_context: str,                   // ← 节点①写入，节点②读取</span>
+<span class="c-dim">  analysis_result: str,               // ← 节点②写入，节点③④读取</span>
+<span class="c-dim">  pentest_findings: dict,             // ← 节点②(渗透)写入</span>
+<span class="c-dim">  response_plan: str,                 // ← 节点③写入，节点④读取</span>
+<span class="c-dim">  final_report: str,                  // ← 节点④写入，最终输出</span>
+<span class="c-dim">  next_step: str,                     // ← 控制流字段</span>
+<span class="c-dim">}</span>
+  </div>
+
+  <br>
+
+  <h3>路径 A 示例：一条安全告警的完整旅程</h3>
+  <div class="ascii-diagram">
+<span class="c-dim">请求: POST /analyze  {"alert_data": "检测到来自 45.33.32.156 的异常登录...", "task_type":"alert"}</span>
+
+<span class="c-purple">节点⓪ route_entry</span>
+  <span class="c-dim">读:  task_type = "alert"</span>
+  <span class="c-purple">写:  next_step = "retrieve_knowledge"</span>
+  <span class="c-dim">决策: task_type=="alert" → 走蓝队路径</span>
+
+<span class="c-pink">节点① retrieve_knowledge</span>
+  <span class="c-dim">读:  alert_data = "检测到来自 45.33.32.156 的异常登录..."</span>
+  <span class="c-dim">动作: kb.query(alert_data, k=3) → ChromaDB 检索 TOP-3 相关文档</span>
+  <span class="c-pink">写:  rag_context = </span>
+<span class="c-pink">       "[来源: MITRE ATT&CK] Phishing is the most common initial access vector (T1566)..."</span>
+<span class="c-pink">       "[来源: Incident Response] Ransomware attack lifecycle: 1) Initial access..."</span>
+
+<span class="c-orange">节点② analyze_threat</span>
+  <span class="c-dim">读:  alert_data + rag_context</span>
+  <span class="c-dim">动作: ReACT Agent 循环 →</span>
+  <span class="c-dim">      Step 1 (思考): "提取 IOC... IP 45.33.32.156"</span>
+  <span class="c-dim">      Step 2 (行动): query_ip_reputation("45.33.32.156") → VT 查杀</span>
+  <span class="c-dim">      Step 3 (观察): "malicious:15, suspicious:3 → 确认为恶意IP"</span>
+  <span class="c-dim">      Step 4 (思考): "搜索关联漏洞..."</span>
+  <span class="c-dim">      Step 5 (行动): search_cve("SSH brute force") → CVE 搜索</span>
+  <span class="c-dim">      Step 6 (结论): "研判: Confirmed Threat, 建议立即封禁IP"</span>
+  <span class="c-orange">写:  analysis_result = "研判结论: 确认威胁... IOC: 45.33.32.156 (恶意)..."</span>
+  <span class="c-orange">写:  next_step = "plan_response"</span>
+
+<span class="c-yellow">节点③ plan_response</span>
+  <span class="c-dim">读:  analysis_result</span>
+  <span class="c-dim">动作: Responder.generate_response_plan() → LLM 生成分阶段计划</span>
+  <span class="c-yellow">写:  response_plan = "1. 立即封禁 IP 45.33.32.156 (自动化)\n2. 检查受影响账户..."</span>
+  <span class="c-yellow">写:  next_step = "generate_report"</span>
+
+<span class="c-green">节点④ generate_report</span>
+  <span class="c-dim">读:  alert_data + analysis_result + response_plan</span>
+  <span class="c-dim">动作: Reporter.generate_report() → LLM 整合为结构化 Markdown</span>
+  <span class="c-green">写:  final_report = "# 安全事件分析报告\n## 1. 事件概述\n..."</span>
+  <span class="c-green">写:  next_step = "done"</span>
+
+<span class="c-dim">→ 返回 AlertResponse {analysis, response_plan, report} → JSON 响应</span>
+  </div>
+
+  <br>
+
+  <h3>路径 B 示例：一次渗透测试的完整旅程</h3>
+  <div class="ascii-diagram">
+<span class="c-dim">请求: POST /pentest  {"target": "192.168.1.1", "task_type":"pentest"}</span>
+
+<span class="c-purple">节点⓪ route_entry</span>
+  <span class="c-dim">读:  task_type = "pentest"</span>
+  <span class="c-purple">写:  next_step = "run_pentest"</span>
+  <span class="c-dim">决策: task_type=="pentest" → 走红队路径，跳过 RAG</span>
+
+<span class="c-teal">节点② run_pentest</span>
+  <span class="c-dim">读:  target = "192.168.1.1"</span>
+  <span class="c-dim">动作: PentestAgent.run_with_mcp_tools(target) →</span>
+  <span class="c-dim">      ┌─ Step 1: mcp.call_tool("nmap","scan_ports")    → 发现 22,80,443,3306,8080 开放</span>
+  <span class="c-dim">      ├─ Step 2: mcp.call_tool("nmap","detect_services")→ Apache 2.4.41, MySQL 5.7.38</span>
+  <span class="c-dim">      ├─ Step 3: mcp.call_tool("nmap","vuln_scan")      → SWEET32 确认, Log4Shell 待验证</span>
+  <span class="c-dim">      ├─ Step 4: mcp.call_tool("whatweb","fingerprint")  → WordPress 5.8.3, PHP 7.4</span>
+  <span class="c-dim">      └─ Step 5: mcp.call_tool("exploitdb","search")     → 搜索 "Apache 2.4.41" 漏洞利用</span>
+  <span class="c-dim">动作: pentest.generate_report_from_findings() → LLM 综合所有发现</span>
+  <span class="c-teal">写:  pentest_findings = {ports:"...", services:"...", ...}  ← 原始数据</span>
+  <span class="c-teal">写:  analysis_result = "### 渗透测试综合评估\n风险等级: High\n..." ← LLM 报告</span>
+  <span class="c-teal">写:  next_step = "plan_response"</span>
+
+<span class="c-yellow">节点③ plan_response</span>
+  <span class="c-dim">读:  analysis_result (包含渗透测试的综合发现)</span>
+  <span class="c-dim">动作: Responder 检测到是渗透测试结果，调整 prompt 措辞</span>
+  <span class="c-yellow">写:  response_plan = "P0: 升级 OpenSSH + MySQL 到最新版..."</span>
+
+<span class="c-green">节点④ generate_report</span>
+  <span class="c-dim">读:  target + analysis_result + response_plan</span>
+  <span class="c-green">写:  final_report = "# 渗透测试评估报告\n## 1. 风险评估总结\n..."</span>
+  </div>
+</section>
+
+
+<!-- ===== 四、MCP工具链 ===== -->
+<section>
+  <h2>四、MCP 工具链：12 个工具如何被 Agent 发现和调用</h2>
+
+  <div class="ascii-diagram">
+<span class="c-bold">启动阶段：工具发现 (Agent 启动时自动完成)</span>
+
+  <span class="c-teal">MCPClientManager.start_all()</span>
+  <span class="c-dim">│</span>
+  <span class="c-dim">├─► 启动子进程: python -m src.mcp.servers.nmap_server --mock</span>
+  <span class="c-dim">│   └─► list_tools() → 返回 4 个 Tool 定义 (scan_ports/detect_services/os_fingerprint/vuln_scan)</span>
+  <span class="c-dim">│       注册为: nmap.scan_ports, nmap.detect_services, ...</span>
+  <span class="c-dim">│</span>
+  <span class="c-dim">├─► 启动子进程: python -m src.mcp.servers.whatweb_server --mock</span>
+  <span class="c-dim">│   └─► list_tools() → 返回 4 个 Tool 定义 (fingerprint_web/detect_cms/find_login_pages/check_technologies)</span>
+  <span class="c-dim">│       注册为: whatweb.fingerprint_web, whatweb.detect_cms, ...</span>
+  <span class="c-dim">│</span>
+  <span class="c-dim">└─► 启动子进程: python -m src.mcp.servers.exploitdb_server --mock</span>
+  <span class="c-dim">    └─► list_tools() → 返回 4 个 Tool 定义 (search_exploits/get_exploit_info/search_by_cve/list_recent)</span>
+  <span class="c-dim">        注册为: exploitdb.search_exploits, exploitdb.get_exploit_info, ...</span>
+
+<span class="c-bold">运行时：工具调用 (Agent 决策后触发)</span>
+
+  <span class="c-teal">PentestAgent</span>                          <span class="c-teal">MCPClientManager</span>               <span class="c-teal">nmap Server (子进程)</span>
+  <span class="c-dim">│</span>                                         <span class="c-dim">│</span>                              <span class="c-dim">│</span>
+  <span class="c-dim">│</span>  call_tool("nmap","scan_ports",       <span class="c-dim">│</span>                              <span class="c-dim">│</span>
+  <span class="c-dim">│</span>    {target:"192.168.1.1",ports:"1-1000"})<span class="c-dim">│</span>                             <span class="c-dim">│</span>
+  <span class="c-dim">├───────────────────────────────────────►│</span>                              <span class="c-dim">│</span>
+  <span class="c-dim">│</span>                                         <span class="c-dim">│</span>  session.call_tool(           <span class="c-dim">│</span>
+  <span class="c-dim">│</span>                                         <span class="c-dim">│</span>    "scan_ports", args)        <span class="c-dim">│</span>
+  <span class="c-dim">│</span>                                         <span class="c-dim">├──────────────────────────────►│</span>
+  <span class="c-dim">│</span>                                         <span class="c-dim">│</span>                              <span class="c-dim">│</span> <span class="c-dim">_build_nmap_args()</span>
+  <span class="c-dim">│</span>                                         <span class="c-dim">│</span>                              <span class="c-dim">│</span> <span class="c-dim">→ ["nmap","-p","1-1000",...]</span>
+  <span class="c-dim">│</span>                                         <span class="c-dim">│</span>                              <span class="c-dim">│</span> MOCK: 返回预设数据
+  <span class="c-dim">│</span>                                         <span class="c-dim">│◄──────────────────────────────┤</span> REAL: subprocess.run(nmap)
+  <span class="c-dim">│</span>                                         <span class="c-dim">│</span>  TextContent(text=          <span class="c-dim">│</span>
+  <span class="c-dim">│</span>                                         <span class="c-dim">│</span>    "PORT STATE SERVICE\n  <span class="c-dim">│</span>
+  <span class="c-dim">│</span>                                         <span class="c-dim">│</span>     22/tcp open ssh..."   <span class="c-dim">│</span>
+  <span class="c-dim">│◄───────────────────────────────────────┤</span>                              <span class="c-dim">│</span>
+  <span class="c-dim">│</span>  返回: "22/tcp open ssh\n                                          <span class="c-dim">│</span>
+  <span class="c-dim">│</span>          80/tcp open http\n..."                                     <span class="c-dim">│</span>
+  <span class="c-dim">│</span>                                                                      <span class="c-dim">│</span>
+  <span class="c-dim">│</span>  继续: detect_services → vuln_scan → whatweb → exploitdb            <span class="c-dim">│</span>
+  <span class="c-dim">│</span>  (每次调用都是相同的 MCP 协议流程)                                    <span class="c-dim">│</span>
+  </div>
+</section>
+
+
+<!-- ===== 五、4个Agent职责 ===== -->
+<section>
+  <h2>五、四个 Agent 的职责边界与协作关系</h2>
+
+  <div class="ascii-diagram">
+<span class="c-dim">┌─────────────────────────────────────────────────────────────────────────────┐</span>
+<span class="c-dim">│</span>                         <span class="c-bold">四个 Agent · 一条生产线</span>                              <span class="c-dim">│</span>
+<span class="c-dim">│</span>                                                                             <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-orange">┌───────────────────────┐</span>                                                <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-orange">│   ThreatAnalyzer      │</span>  职责：理解告警 → 提取IOC → 调VT/CVE → 研判     <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-orange">│   (蓝队专属)           │</span>  范式：<span class="c-orange">ReACT (思考⇄行动循环)</span>                  <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-orange">│                       │</span>  工具：query_ip / query_hash / search_cve          <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-orange">│   输入: alert_data     │</span>  输出：analysis_result (研判结论)                  <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-orange">│         + rag_context  │</span>                                                <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-orange">└───────────────────────┘</span>                                                <span class="c-dim">│</span>
+<span class="c-dim">│</span>                                                                             <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-teal">┌───────────────────────┐</span>                                                <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-teal">│   PentestAgent        │</span>  职责：协调 3 个 MCP Server 执行渗透侦察         <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-teal">│   (红队专属)           │</span>  范式：<span class="c-teal">分步编排 (程序化 + LLM 驱动双模式)</span>      <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-teal">│                       │</span>  工具：nmap / whatweb / exploitdb (MCP)            <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-teal">│   输入: target         │</span>  输出：pentest_findings (原始) + analysis_result (报告)<span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-teal">└───────────────────────┘</span>                                                <span class="c-dim">│</span>
+<span class="c-dim">│</span>                                                                             <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-yellow">┌───────────────────────┐</span>                                                <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-yellow">│   IncidentResponder   │</span>  职责：根据分析结果生成分阶段响应计划               <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-yellow">│   (两条路径共享)       │</span>  范式：<span class="c-yellow">Prompt-driven (结构化 prompt 模板)</span>     <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-yellow">│                       │</span>  关键：区分自动化操作 vs 需人工确认                 <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-yellow">│   输入: analysis_result│</span>  输出：response_plan (P0/P1/P2/P3 时间线)          <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-yellow">└───────────────────────┘</span>                                                <span class="c-dim">│</span>
+<span class="c-dim">│</span>                                                                             <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-green">┌───────────────────────┐</span>                                                <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-green">│   ReportGenerator     │</span>  职责：整合所有信息 → 结构化 Markdown 报告           <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-green">│   (两条路径共享)       │</span>  范式：<span class="c-green">Prompt-driven (报告模板驱动)</span>             <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-green">│                       │</span>  关键：技术层 (细节) + 管理层 (影响范围) 双受众      <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-green">│   输入: alert/target   │</span>  输出：final_report (结构化 Markdown)                <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-green">│         + analysis    │</span>                                                <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-green">│         + response    │</span>                                                <span class="c-dim">│</span>
+<span class="c-dim">│</span>  <span class="c-green">└───────────────────────┘</span>                                                <span class="c-dim">│</span>
+<span class="c-dim">│</span>                                                                             <span class="c-dim">│</span>
+<span class="c-dim">└─────────────────────────────────────────────────────────────────────────────┘</span>
+  </div>
+
+  <div class="callout">
+    <strong>面试要点：为什么 Analyzer 用 ReACT 而 Responder/Reporter 只用 Prompt？</strong><br>
+    Responder 和 Reporter 是<strong>纯文本转换任务</strong>——输入一段文本，输出另一段文本，不需要调用外部工具。<br>
+    Analyzer 需要<strong>多步调查</strong>——查 IP → 看结果 → 决定是否查 CVE → 综合判断，ReACT 的思考-行动循环更适合。<br>
+    这种因地制宜的范式选型，证明你不是"所有 Agent 都用同一种模式"的初学者。
+  </div>
+</section>
+
+
+<!-- ===== 六、文件调用链 ===== -->
+<section>
+  <h2>六、一次 API 请求背后的完整文件调用链</h2>
+  <p style="color:var(--text2);font-size:0.85em;margin-bottom:16px;">
+    从 curl 命令到返回 JSON，代码在 10 个文件之间跳转。这张图让你面试时能说出每一层的文件名和职责。
+  </p>
+
+  <div class="ascii-diagram">
+<span class="c-dim">$ curl -X POST http://localhost:8000/pentest -d '{"target":"192.168.1.1","task_type":"pentest"}'</span>
+
+<span class="c-blue">1. main.py                           ── FastAPI 接收请求 → Pydantic 验证 → 调用 workflow.ainvoke()</span>
+
+<span class="c-purple">2. graph/workflow.py                  ── LangGraph 编排引擎</span>
+<span class="c-dim">   │  create_security_agent_workflow() 返回 CompiledStateGraph</span>
+<span class="c-dim">   │  workflow.ainvoke({task_type:"pentest", target:"192.168.1.1", ...})</span>
+<span class="c-dim">   │</span>
+<span class="c-dim">   ├─► route_entry() ── 读 task_type → 路由到 "run_pentest"</span>
+<span class="c-dim">   │</span>
+<span class="c-purple">   └─► run_pentest()</span>
+
+<span class="c-teal">3. agents/pentest_agent.py            ── 渗透测试 Agent</span>
+<span class="c-dim">   │  PentestAgent.__init__(model)         ← 注入 LLM 实例</span>
+<span class="c-dim">   │  PentestAgent.run_with_mcp_tools()    ← 分步编排 MCP 工具链</span>
+<span class="c-dim">   │</span>
+<span class="c-dim">   ├─► ensure_mcp() → MCPClientManager()  ← 懒初始化 MCP 连接</span>
+
+<span class="c-teal">4. mcp/client.py                      ── MCP 连接管理器</span>
+<span class="c-dim">   │  start_all() → 启动 3 个 Server 子进程 → 各 list_tools() 发现工具</span>
+<span class="c-dim">   │  call_tool("nmap","scan_ports", {target, ports})</span>
+<span class="c-dim">   │  call_tool("nmap","detect_services", {target})</span>
+<span class="c-dim">   │  call_tool("nmap","vuln_scan", {target, category:"vuln"})</span>
+<span class="c-dim">   │  call_tool("whatweb","fingerprint_web", {url})</span>
+<span class="c-dim">   │  call_tool("exploitdb","search_exploits", {query:"Apache 2.4.41"})</span>
+<span class="c-dim">   │</span>
+<span class="c-dim">   └─► 每个 call_tool → MCP stdio 协议 → Server 子进程处理 → 返回结果</span>
+
+<span class="c-teal">5. mcp/servers/nmap_server.py         ── nmap MCP Server (独立进程)</span>
+<span class="c-dim">   │  handle_list_tools() → 返回 4 个 Tool 定义</span>
+<span class="c-dim">   │  handle_call_tool("scan_ports", {target,ports})</span>
+<span class="c-dim">   │    → MOCK 模式: MOCK_RESPONSES["scan_ports"](target, ports)</span>
+<span class="c-dim">   │    → 返回模拟端口扫描结果</span>
+<span class="c-dim">   │</span>
+<span class="c-teal">6. mcp/servers/whatweb_server.py      ── whatweb MCP Server (独立进程)</span>
+<span class="c-teal">7. mcp/servers/exploitdb_server.py    ── exploitdb MCP Server (独立进程)</span>
+
+<span class="c-dim">   ← 所有扫描结果汇总到 PentestAgent</span>
+
+<span class="c-teal">   PentestAgent._extract_keywords()    ← 从服务版本提取搜索关键词</span>
+<span class="c-teal">   PentestAgent.generate_report_from_findings()  ← LLM 综合生成报告</span>
+
+<span class="c-dim">   ← 返回 {pentest_findings, analysis_result, next_step} 写入 State</span>
+
+<span class="c-purple">8. graph/workflow.py (继续)</span>
+<span class="c-dim">   ├─► plan_response() → agents/responder.py   ← Responder 生成 P0-P3 计划</span>
+<span class="c-dim">   └─► generate_report() → agents/reporter.py  ← Reporter 整合 Markdown</span>
+
+<span class="c-blue">9. main.py                           ── AlertResponse 序列化 → JSON 返回</span>
+  </div>
+</section>
+
+
+<!-- ===== 七、面试一页纸 ===== -->
+<section>
+  <h2>七、面试速查：项目核心数据</h2>
+  <table>
+    <thead><tr><th>维度</th><th>数据</th></tr></thead>
+    <tbody>
+      <tr><td>Agent 数量</td><td>4 个（ThreatAnalyzer / PentestAgent / IncidentResponder / ReportGenerator）</td></tr>
+      <tr><td>工作流节点</td><td>6 个（route_entry / RAG / analyze / pentest / plan_response / generate_report）</td></tr>
+      <tr><td>工作流路径</td><td>2 条（蓝队告警分析 / 红队渗透测试），在 plan_response 汇合</td></tr>
+      <tr><td>条件路由</td><td>1 个（entry_router: task_type → "retrieve_knowledge" | "run_pentest"）</td></tr>
+      <tr><td>MCP Server</td><td>3 个独立子进程（nmap / whatweb / exploitdb）</td></tr>
+      <tr><td>MCP 工具总数</td><td>12 个（每个 Server 4 个工具）</td></tr>
+      <tr><td>传统 API 工具</td><td>2 个（VirusTotal / NVD CVE）</td></tr>
+      <tr><td>RAG 向量库</td><td>1 个（ChromaDB + text-embedding-3-small + 7 条种子知识）</td></tr>
+      <tr><td>Agent 范式</td><td>3 种（ReACT / MCP 编排 / Prompt-driven）</td></tr>
+      <tr><td>API 端点</td><td>3 个（POST /analyze / POST /pentest / GET /health）</td></tr>
+      <tr><td>状态字段</td><td>9 个（messages / task_type / alert_data / target / rag_context / analysis_result / pentest_findings / response_plan / final_report / severity / next_step）</td></tr>
+      <tr><td>代码文件</td><td>17 个（含 MCP Server 和工具）</td></tr>
+      <tr><td>注释风格</td><td>面试级（每个文件头有设计决策说明，每个函数有面试考点标注）</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<div class="footer">
+  Security Agent · 流程与结构详解 · 生成于 2026-06-12<br>
+  基于 LangGraph + MCP 协议的多 Agent 安全分析系统
+</div>
+
+</div>
+</body>
+</html>

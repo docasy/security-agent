@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security Agent — 系统架构图</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --border: #334155;
+    --text: #e2e8f0;
+    --text2: #94a3b8;
+    --blue: #38bdf8;
+    --purple: #818cf8;
+    --green: #4ade80;
+    --yellow: #fbbf24;
+    --red: #f87171;
+    --orange: #fb923c;
+    --pink: #f472b6;
+    --teal: #2dd4bf;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 20px;
+  }
+  .container { max-width: 1400px; margin: 0 auto; }
+
+  /* Header */
+  .header {
+    text-align: center;
+    padding: 40px 24px;
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 50%, #1a1a2e 100%);
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    margin-bottom: 28px;
+  }
+  .header h1 {
+    font-size: 2em;
+    background: linear-gradient(135deg, var(--blue), var(--purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 6px;
+  }
+  .header .subtitle { color: var(--text2); font-size: 1em; }
+
+  /* Section */
+  section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin-bottom: 20px;
+  }
+  h2 {
+    font-size: 1.25em;
+    margin-bottom: 18px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  h3 { font-size: 1em; color: var(--blue); margin: 16px 0 10px; }
+
+  /* System Overview — Big Block Diagram */
+  .system-overview {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .layer {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    position: relative;
+  }
+  .layer-label {
+    position: absolute;
+    top: -12px;
+    left: 16px;
+    background: var(--card);
+    padding: 2px 12px;
+    font-size: 0.78em;
+    font-weight: 700;
+    border-radius: 6px;
+    letter-spacing: 0.5px;
+  }
+  .layer.user     { border-color: var(--green); }
+  .layer.user .layer-label { color: var(--green); border: 1px solid var(--green); }
+  .layer.api      { border-color: var(--blue); }
+  .layer.api .layer-label { color: var(--blue); border: 1px solid var(--blue); }
+  .layer.orchestra{ border-color: var(--purple); }
+  .layer.orchestra .layer-label { color: var(--purple); border: 1px solid var(--purple); }
+  .layer.agent    { border-color: var(--orange); }
+  .layer.agent .layer-label { color: var(--orange); border: 1px solid var(--orange); }
+  .layer.tool     { border-color: var(--teal); }
+  .layer.tool .layer-label { color: var(--teal); border: 1px solid var(--teal); }
+  .layer.storage  { border-color: var(--pink); }
+  .layer.storage .layer-label { color: var(--pink); border: 1px solid var(--pink); }
+
+  .layer-content {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 4px;
+  }
+
+  .block {
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 0.85em;
+    font-weight: 600;
+    text-align: center;
+    flex: 0 1 auto;
+    border: 1px solid;
+  }
+  .block.api-endpoint { background: rgba(56,189,248,0.12); border-color: var(--blue); color: var(--blue); }
+  .block.node        { background: rgba(129,140,248,0.12); border-color: var(--purple); color: var(--purple); }
+  .block.agent-item  { background: rgba(251,146,60,0.12); border-color: var(--orange); color: var(--orange); }
+  .block.mcp-server  { background: rgba(45,212,191,0.12); border-color: var(--teal); color: var(--teal); }
+  .block.storage-db  { background: rgba(244,114,182,0.12); border-color: var(--pink); color: var(--pink); }
+  .block.user-req    { background: rgba(74,222,128,0.12); border-color: var(--green); color: var(--green); }
+  .block.small { font-size: 0.78em; padding: 6px 12px; }
+
+  /* Arrows between layers */
+  .arrow-down {
+    text-align: center;
+    color: var(--text2);
+    font-size: 1.2em;
+    margin: -8px 0;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Dual Path Flow */
+  .dual-path {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 900px) { .dual-path { grid-template-columns: 1fr; } }
+
+  .path-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    position: relative;
+  }
+  .path-card.alert { border-left: 3px solid var(--purple); }
+  .path-card.pentest { border-left: 3px solid var(--teal); }
+  .path-card h3 { margin-top: 0; }
+
+  .flow-step {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin: 6px 0;
+    flex-wrap: wrap;
+  }
+  .flow-step .step-box {
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 0.82em;
+    font-weight: 600;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .flow-step .arrow {
+    color: var(--text2);
+    margin: 0 4px;
+    font-size: 0.9em;
+  }
+  .step-box.rag  { background: rgba(244,114,182,0.1); border-color: var(--pink); color: var(--pink); }
+  .step-box.react{ background: rgba(251,146,60,0.1); border-color: var(--orange); color: var(--orange); }
+  .step-box.plan { background: rgba(251,191,36,0.1); border-color: var(--yellow); color: var(--yellow); }
+  .step-box.report { background: rgba(74,222,128,0.1); border-color: var(--green); color: var(--green); }
+  .step-box.mcp  { background: rgba(45,212,191,0.1); border-color: var(--teal); color: var(--teal); }
+
+  /* MCP Detail */
+  .mcp-detail {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-top: 12px;
+  }
+  @media (max-width: 900px) { .mcp-detail { grid-template-columns: 1fr; } }
+
+  .mcp-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    background: rgba(255,255,255,0.015);
+  }
+  .mcp-card h4 { color: var(--teal); font-size: 0.95em; margin-bottom: 8px; }
+  .mcp-card .tool-list {
+    list-style: none;
+    font-size: 0.8em;
+    color: var(--text2);
+  }
+  .mcp-card .tool-list li {
+    padding: 3px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+  .mcp-card .tool-list li::before {
+    content: '▸ ';
+    color: var(--teal);
+    font-size: 0.7em;
+  }
+
+  /* Data Flow */
+  .data-flow {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.82em;
+    color: var(--text2);
+    background: rgba(255,255,255,0.02);
+    border-radius: 8px;
+    padding: 16px 20px;
+    line-height: 2;
+    overflow-x: auto;
+  }
+  .data-flow .highlight { color: var(--blue); }
+  .data-flow .dim { color: var(--text2); opacity: 0.5; }
+
+  /* Tech stack table */
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.88em; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--blue); font-weight: 600; background: rgba(56,189,248,0.04); }
+  td { color: var(--text2); }
+  td:first-child { color: var(--text); font-weight: 600; }
+
+  .tag {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 0.78em; border: 1px solid; margin: 1px 2px;
+  }
+  .tag.hot { background: rgba(248,113,113,0.1); border-color: var(--red); color: var(--red); }
+  .tag.core{ background: rgba(56,189,248,0.1); border-color: var(--blue); color: var(--blue); }
+  .tag.new { background: rgba(74,222,128,0.1); border-color: var(--green); color: var(--green); }
+
+  .footer { text-align: center; color: var(--text2); font-size: 0.82em; padding: 20px; opacity: 0.6; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- HEADER -->
+  <div class="header">
+    <h1>Security Agent — 多智能体安全分析系统</h1>
+    <p class="subtitle">LangGraph + MCP 协议 | 4 Agent · 3 MCP Server · 2 条工作流路径</p>
+    <p class="subtitle" style="margin-top:4px; font-size:0.85em;">架构图 v2.0 — 2026-06-04</p>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- 一、系统全景分层架构 -->
+  <!-- ============================================================ -->
+  <section>
+    <h2>一、系统全景 — 六层架构</h2>
+
+    <!-- 用户层 -->
+    <div class="layer user">
+      <div class="layer-label">👤 用户接入层</div>
+      <div class="layer-content">
+        <div class="block user-req">curl / Postman<br><span style="font-weight:400;font-size:0.8em;">CLI 测试</span></div>
+        <div class="block user-req">Swagger UI<br><span style="font-weight:400;font-size:0.8em;">/docs 交互调试</span></div>
+        <div class="block user-req">Streamlit 前端<br><span style="font-weight:400;font-size:0.8em;">可视化操作面板</span></div>
+        <div class="block user-req">CI/CD / Webhook<br><span style="font-weight:400;font-size:0.8em;">自动化集成</span></div>
+      </div>
+    </div>
+    <div class="arrow-down">▼</div>
+
+    <!-- API 层 -->
+    <div class="layer api">
+      <div class="layer-label">🔌 API 网关层 (FastAPI)</div>
+      <div class="layer-content">
+        <div class="block api-endpoint">
+          POST /analyze<br>
+          <span style="font-weight:400;font-size:0.78em;">告警分析 · SOC 被动研判</span>
+        </div>
+        <div class="block api-endpoint">
+          POST /pentest<br>
+          <span style="font-weight:400;font-size:0.78em;">渗透扫描 · 红队主动侦察</span>
+        </div>
+        <div class="block api-endpoint">
+          GET /health<br>
+          <span style="font-weight:400;font-size:0.78em;">健康检查 · K8s 探针</span>
+        </div>
+      </div>
+    </div>
+    <div class="arrow-down">▼</div>
+
+    <!-- 编排层 -->
+    <div class="layer orchestra">
+      <div class="layer-label">🧠 编排层 (LangGraph StateGraph)</div>
+      <div class="layer-content">
+        <div class="block node">route_entry<br><span style="font-weight:400;font-size:0.78em;">入口路由分发</span></div>
+        <div class="block node">RAG 检索<br><span style="font-weight:400;font-size:0.78em;">ChromaDB 知识增强</span></div>
+        <div class="block node">Threat 分析<br><span style="font-weight:400;font-size:0.78em;">ReACT Agent</span></div>
+        <div class="block node">渗透扫描<br><span style="font-weight:400;font-size:0.78em;">MCP 工具链调度</span></div>
+        <div class="block node">响应计划<br><span style="font-weight:400;font-size:0.78em;">P0→P3 时间线</span></div>
+        <div class="block node">报告生成<br><span style="font-weight:400;font-size:0.78em;">Markdown 输出</span></div>
+        <div class="block node small">MemorySaver<br><span style="font-weight:400;font-size:0.75em;">断点续传</span></div>
+      </div>
+    </div>
+    <div class="arrow-down">▼</div>
+
+    <!-- Agent 层 -->
+    <div class="layer agent">
+      <div class="layer-label">🤖 Agent 层 (4 个专业 Agent)</div>
+      <div class="layer-content">
+        <div class="block agent-item">
+          ThreatAnalyzer<br>
+          <span style="font-weight:400;font-size:0.78em;">ReACT 范式 · VT+CVE</span>
+        </div>
+        <div class="block agent-item">
+          PentestAgent<br>
+          <span style="font-weight:400;font-size:0.78em;">MCP 工具编排 · 分步扫描</span>
+        </div>
+        <div class="block agent-item">
+          IncidentResponder<br>
+          <span style="font-weight:400;font-size:0.78em;">Playbook 驱动 · 自动化/人工分类</span>
+        </div>
+        <div class="block agent-item">
+          ReportGenerator<br>
+          <span style="font-weight:400;font-size:0.78em;">结构化报告 · 多受众输出</span>
+        </div>
+      </div>
+    </div>
+    <div class="arrow-down">▼</div>
+
+    <!-- 工具层 -->
+    <div class="layer tool">
+      <div class="layer-label">🔧 工具层 (2 类工具 · 5 个工具)</div>
+      <div class="layer-content">
+        <div style="flex:1; min-width:280px;">
+          <div style="font-size:0.82em; color:var(--teal); margin-bottom:6px; font-weight:600;">
+            ▎通过 MCP 协议 (进程隔离、标准化接口)
+          </div>
+          <div class="block mcp-server">
+            nmap MCP Server<br>
+            <span style="font-weight:400;font-size:0.76em;">4 工具：端口/服务/OS/漏洞</span>
+          </div>
+          <div class="block mcp-server">
+            whatweb MCP Server<br>
+            <span style="font-weight:400;font-size:0.76em;">4 工具：指纹/CMS/入口/技术栈</span>
+          </div>
+          <div class="block mcp-server">
+            exploitdb MCP Server<br>
+            <span style="font-weight:400;font-size:0.76em;">4 工具：搜索/详情/CVE/最新</span>
+          </div>
+        </div>
+        <div style="flex:1; min-width:200px;">
+          <div style="font-size:0.82em; color:var(--orange); margin-bottom:6px; font-weight:600;">
+            ▎直接调用 (HTTP API)
+          </div>
+          <div class="block agent-item small">
+            VirusTotal API v3<br>
+            <span style="font-weight:400;font-size:0.76em;">文件/IP/域名 查杀</span>
+          </div>
+          <div class="block agent-item small">
+            NVD CVE API 2.0<br>
+            <span style="font-weight:400;font-size:0.76em;">漏洞关键词检索</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="arrow-down">▼</div>
+
+    <!-- 存储层 -->
+    <div class="layer storage">
+      <div class="layer-label">💾 数据 & 存储层</div>
+      <div class="layer-content">
+        <div class="block storage-db">
+          ChromaDB<br>
+          <span style="font-weight:400;font-size:0.78em;">向量知识库 (ATT&CK/CVE/OWASP)</span>
+        </div>
+        <div class="block storage-db">
+          OpenAI Embedding<br>
+          <span style="font-weight:400;font-size:0.78em;">text-embedding-3-small</span>
+        </div>
+        <div class="block storage-db">
+          MemorySaver<br>
+          <span style="font-weight:400;font-size:0.78em;">对话状态持久化</span>
+        </div>
+        <div class="block storage-db">
+          .env Config<br>
+          <span style="font-weight:400;font-size:0.78em;">MCP_MOCK_MODE + API Keys</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- 二、双路径工作流 -->
+  <!-- ============================================================ -->
+  <section>
+    <h2>二、双路径工作流 — 一条代码，两种模式</h2>
+    <div class="dual-path">
+
+      <!-- 路径 A：告警分析 -->
+      <div class="path-card alert">
+        <h3 style="color:var(--purple);">路径 A — 告警分析（SOC 场景）</h3>
+        <p style="font-size:0.85em;color:var(--text2);margin-bottom:14px;">
+          被动接收安全告警 → RAG 知识增强 → ReACT 研判 → 响应计划 → 报告
+        </p>
+        <div class="flow-step">
+          <span class="step-box rag">RAG 知识检索</span>
+          <span class="arrow">→</span>
+          <span class="step-box react">ReACT 威胁分析</span>
+          <span class="arrow">→</span>
+          <span class="step-box plan">响应计划</span>
+          <span class="arrow">→</span>
+          <span class="step-box report">生成报告</span>
+        </div>
+
+        <div style="margin-top:14px; font-size:0.8em; color:var(--text2);">
+          <strong style="color:var(--text);">数据流:</strong><br>
+          <code>alert_data</code> →
+          ChromaDB 检索 TOP-3 相关知识 →
+          注入 ReACT Agent 上下文 →
+          VT 查 IP/哈希 → CVE 搜漏洞 →
+          提取 IOC → 研判结论 (FP/Suspicious/Confirmed) →
+          P0-P3 响应时间线 →
+          Markdown 结构化报告
+        </div>
+
+        <div style="margin-top:12px; font-size:0.8em;">
+          <span class="tag core">VirusTotal</span>
+          <span class="tag core">NVD CVE</span>
+          <span class="tag core">ATT&CK 映射</span>
+          <span class="tag hot">ReACT 范式</span>
+        </div>
+      </div>
+
+      <!-- 路径 B：渗透测试 -->
+      <div class="path-card pentest">
+        <h3 style="color:var(--teal);">路径 B — 渗透测试（红队场景）</h3>
+        <p style="font-size:0.85em;color:var(--text2);margin-bottom:14px;">
+          主动侦察目标 → MCP 工具链编排 → 漏洞关联 → 响应计划 → 报告
+        </p>
+        <div class="flow-step">
+          <span class="step-box mcp">nmap 端口扫描</span>
+          <span class="arrow">→</span>
+          <span class="step-box mcp">nmap 服务检测</span>
+          <span class="arrow">→</span>
+          <span class="step-box mcp">whatweb 指纹</span>
+        </div>
+        <div class="flow-step" style="margin-top:6px;">
+          <span class="step-box mcp">nmap 漏洞扫描</span>
+          <span class="arrow">→</span>
+          <span class="step-box mcp">exploitdb 搜索</span>
+          <span class="arrow">→</span>
+          <span class="step-box plan">响应计划</span>
+          <span class="arrow">→</span>
+          <span class="step-box report">综合报告</span>
+        </div>
+
+        <div style="margin-top:14px; font-size:0.8em; color:var(--text2);">
+          <strong style="color:var(--text);">MCP 调用链:</strong><br>
+          <code>target</code> →
+          MCPClientManager 连接 3 个 Server 子进程 →
+          scan_ports → detect_services → vuln_scan →
+          fingerprint_web (如果发现 Web 端口) →
+          search_exploits (按版本关键词) →
+          LLM 综合报告 (风险矩阵 + 修复路线图)
+        </div>
+
+        <div style="margin-top:12px; font-size:0.8em;">
+          <span class="tag new">MCP 协议</span>
+          <span class="tag new">进程隔离</span>
+          <span class="tag core">nmap</span>
+          <span class="tag core">whatweb</span>
+          <span class="tag core">exploitdb</span>
+          <span class="tag hot">2026 核心考点</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 汇合说明 -->
+    <div style="text-align:center; margin-top:16px; padding:10px; border:1px dashed var(--yellow); border-radius:8px; background:rgba(251,191,36,0.04);">
+      <span style="color:var(--yellow); font-weight:600;">⬆ 两条路径在「响应计划」节点汇合，共享报告生成流程</span>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- 三、MCP 工具链详解 -->
+  <!-- ============================================================ -->
+  <section>
+    <h2>三、MCP 渗透测试工具链 — 2026 面试核心</h2>
+
+    <div class="mcp-detail">
+      <!-- nmap -->
+      <div class="mcp-card">
+        <h4>🔍 nmap MCP Server</h4>
+        <p style="font-size:0.8em;color:var(--text2);margin-bottom:8px;">
+          网络扫描器 · 渗透测试第一步
+        </p>
+        <ul class="tool-list">
+          <li><code style="color:var(--teal);">scan_ports</code> — TCP 端口扫描 (1-1000)</li>
+          <li><code style="color:var(--teal);">detect_services</code> — 服务版本检测 (-sV)</li>
+          <li><code style="color:var(--teal);">os_fingerprint</code> — OS 识别 (-O)</li>
+          <li><code style="color:var(--teal);">vuln_scan</code> — NSE 漏洞扫描</li>
+        </ul>
+        <p style="font-size:0.75em;color:var(--text2);margin-top:6px;">
+          mock 模式内置完整扫描数据
+        </p>
+      </div>
+
+      <!-- whatweb -->
+      <div class="mcp-card">
+        <h4>🌐 whatweb MCP Server</h4>
+        <p style="font-size:0.8em;color:var(--text2);margin-bottom:8px;">
+          Web 指纹识别 · 技术栈侦察
+        </p>
+        <ul class="tool-list">
+          <li><code style="color:var(--teal);">fingerprint_web</code> — 全栈技术识别</li>
+          <li><code style="color:var(--teal);">detect_cms</code> — CMS + 插件检测</li>
+          <li><code style="color:var(--teal);">find_login_pages</code> — 管理入口发现</li>
+          <li><code style="color:var(--teal);">check_technologies</code> — 版本精准验证</li>
+        </ul>
+        <p style="font-size:0.75em;color:var(--text2);margin-top:6px;">
+          mock 数据模拟 WordPress 企业站侦察
+        </p>
+      </div>
+
+      <!-- exploitdb -->
+      <div class="mcp-card">
+        <h4>💣 exploitdb MCP Server</h4>
+        <p style="font-size:0.8em;color:var(--text2);margin-bottom:8px;">
+          漏洞利用数据库 · 漏洞关联
+        </p>
+        <ul class="tool-list">
+          <li><code style="color:var(--teal);">search_exploits</code> — 关键词搜索</li>
+          <li><code style="color:var(--teal);">get_exploit_info</code> — EDB-ID 详情</li>
+          <li><code style="color:var(--teal);">search_by_cve</code> — CVE 精准关联</li>
+          <li><code style="color:var(--teal);">list_recent_exploits</code> — 最新威胁态势</li>
+        </ul>
+        <p style="font-size:0.75em;color:var(--text2);margin-top:6px;">
+          内置 Log4Shell/ProxyShell/MOVEit 等经典漏洞
+        </p>
+      </div>
+    </div>
+
+    <!-- MCP vs FC 对比 -->
+    <div style="margin-top:18px;">
+      <h3>MCP 协议 vs 传统 Function Calling — 为什么选 MCP？</h3>
+      <table>
+        <thead>
+          <tr><th>维度</th><th>传统 Function Calling</th><th>MCP 协议（本项目）</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>工具定义位置</td>
+            <td>写死在 Agent 代码里</td>
+            <td>MCP Server 独立定义，Agent 动态发现</td>
+          </tr>
+          <tr>
+            <td>进程模型</td>
+            <td>同进程调用</td>
+            <td>独立子进程，stdio 通信</td>
+          </tr>
+          <tr>
+            <td>跨框架复用</td>
+            <td>仅限当前框架生态</td>
+            <td>任何支持 MCP 的 Agent 都能用</td>
+          </tr>
+          <tr>
+            <td>安全隔离</td>
+            <td>无隔离（共享内存）</td>
+            <td>进程级隔离，可限制权限</td>
+          </tr>
+          <tr>
+            <td>新增工具</td>
+            <td>改 Agent 代码 + 重新部署</td>
+            <td>写 MCP Server → 注册 → 自动发现</td>
+          </tr>
+          <tr>
+            <td>类比</td>
+            <td>设备专用充电线</td>
+            <td style="color:var(--green);">USB-C 通用接口</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- 四、数据流 -->
+  <!-- ============================================================ -->
+  <section>
+    <h2>四、一次渗透测试的数据流追踪</h2>
+    <p style="font-size:0.85em;color:var(--text2);margin-bottom:10px;">
+      以 POST /pentest {"target": "192.168.1.1"} 为例，追踪数据在六层架构中的流转：
+    </p>
+    <div class="data-flow">
+      <span class="dim">1.</span> <span class="highlight">API 层</span>    接收请求 → Pydantic 验证 → 调用 workflow.ainvoke({task_type:"pentest", target:"192.168.1.1"})
+      <span class="dim">2.</span> <span class="highlight">编排层</span>    route_entry 检测 task_type="pentest" → 路由到 run_pentest 节点
+      <span class="dim">3.</span> <span class="highlight">Agent 层</span>  PentestAgent.ensure_mcp() → MCPClientManager.start_all() → 连接 3 个 Server 子进程
+      <span class="dim">4.</span> <span class="highlight">工具层</span>    call_tool("nmap","scan_ports",{target,ports}) → nmap Server 子进程执行 → 返回端口列表
+      <span class="dim">5.</span> <span class="highlight">工具层</span>    call_tool("nmap","detect_services",{target}) → 返回精确版本号
+      <span class="dim">6.</span> <span class="highlight">工具层</span>    call_tool("nmap","vuln_scan",{target,cat:"vuln"}) → 返回 NSE 漏洞检测结果
+      <span class="dim">7.</span> <span class="highlight">工具层</span>    检测到 80/tcp 开放 → call_tool("whatweb","fingerprint_web",{url}) → Web 技术栈
+      <span class="dim">8.</span> <span class="highlight">Agent 层</span>  _extract_keywords("Apache 2.4.41\nMySQL 5.7.38\n...") → 提取版本关键词
+      <span class="dim">9.</span> <span class="highlight">工具层</span>    call_tool("exploitdb","search_exploits",{query:"Apache 2.4.41"}) → 搜索已知漏洞利用
+      <span class="dim">10.</span><span class="highlight">Agent 层</span>  generate_report_from_findings() → LLM 综合分析 → 风险矩阵 + 修复路线图
+      <span class="dim">11.</span><span class="highlight">编排层</span>    状态写入 {analysis_result, pentest_findings, next_step:"plan_response"}
+      <span class="dim">12.</span><span class="highlight">编排层</span>    plan_response → 生成 P0-P3 响应时间线
+      <span class="dim">13.</span><span class="highlight">编排层</span>    generate_report → Reporter Agent 整合所有内容 → Markdown 报告
+      <span class="dim">14.</span><span class="highlight">API 层</span>    AlertResponse {analysis, response_plan, report} → JSON 返回客户端
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- 五、技术栈 -->
+  <!-- ============================================================ -->
+  <section>
+    <h2>五、技术栈总览</h2>
+    <table>
+      <thead>
+        <tr><th>层级</th><th>技术选型</th><th>版本</th><th>选型理由</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Agent 框架</td><td>LangGraph</td><td>≥ 0.2</td><td>显式状态管理 + 图编排，比 LangChain AgentExecutor 更可控</td></tr>
+        <tr><td>LLM 接入</td><td>LangChain (OpenAI)</td><td>≥ 0.3</td><td>业界标准 LLM 接入层，工具集成生态成熟</td></tr>
+        <tr><td>工具协议</td><td><span class="tag new">MCP 1.0</span></td><td>≥ 1.0</td><td>2026 年 Agent 工具标准协议，AI 界的 USB-C</td></tr>
+        <tr><td>推理范式</td><td>ReACT</td><td>—</td><td>思考→行动→观察 循环，适合多步安全调查</td></tr>
+        <tr><td>向量数据库</td><td>ChromaDB</td><td>≥ 0.5</td><td>轻量嵌入式，适合项目规模，无需额外部署</td></tr>
+        <tr><td>Embedding</td><td>text-embedding-3-small</td><td>—</td><td>OpenAI 最新 embedding 模型，性价比最优</td></tr>
+        <tr><td>Web 框架</td><td>FastAPI</td><td>≥ 0.115</td><td>原生异步，自动 OpenAPI 文档，高性能</td></tr>
+        <tr><td>渗透工具</td><td>nmap / whatweb / searchsploit</td><td>系统</td><td>安全业内标准，mock 模式免安装</td></tr>
+        <tr><td>威胁情报</td><td>VirusTotal API v3</td><td>—</td><td>全球最大威胁情报平台，文件/IP/域名查杀</td></tr>
+        <tr><td>漏洞数据库</td><td>NVD CVE API 2.0</td><td>—</td><td>NIST 官方漏洞数据库，权威数据源</td></tr>
+        <tr><td>LLM 模型</td><td>GPT-4o-mini</td><td>—</td><td>性价比高，适合安全分析这种确定性任务</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- 六、项目文件结构 -->
+  <!-- ============================================================ -->
+  <section>
+    <h2>六、项目文件结构</h2>
+    <div class="data-flow">
+      security-agent/
+      ├── <span class="highlight">README.md</span>                 项目文档 + 架构图 + 面试要点
+      ├── <span class="highlight">requirements.txt</span>           依赖清单 (langgraph/mcp/fastapi/chromadb)
+      ├── <span class="highlight">.env.example</span>               环境变量模板 (API Keys + MCP_MOCK_MODE)
+      │
+      └── src/
+          ├── <span class="highlight">main.py</span>                 FastAPI 入口 · 双端点 (/analyze + /pentest)
+          │
+          ├── graph/
+          │   └── <span class="highlight">workflow.py</span>        LangGraph 工作流 · 核心文件 · 6 节点 + 条件路由
+          │
+          ├── agents/
+          │   ├── <span class="highlight">analyzer.py</span>        威胁分析 Agent · ReACT + VT + CVE
+          │   ├── <span class="highlight">pentest_agent.py</span>   渗透测试 Agent · MCP 工具编排 · 两种运行模式
+          │   ├── <span class="highlight">responder.py</span>       响应计划 Agent · Playbook 驱动
+          │   └── <span class="highlight">reporter.py</span>        报告生成 Agent · 结构化 Markdown
+          │
+          ├── mcp/                            ← <span class="highlight">MCP 协议层 (2026 核心)</span>
+          │   ├── <span class="highlight">client.py</span>           多 Server 连接管理器 · 工具发现 · mock 模式
+          │   ├── <span class="highlight">langchain_bridge.py</span> 适配器模式 · MCP→LangChain Tool 动态转换
+          │   └── servers/
+          │       ├── <span class="highlight">nmap_server.py</span>       nmap MCP Server · 4 工具 · stdio
+          │       ├── <span class="highlight">whatweb_server.py</span>    whatweb MCP Server · 4 工具 · stdio
+          │       └── <span class="highlight">exploitdb_server.py</span>  exploitdb MCP Server · 4 工具 · stdio
+          │
+          ├── tools/
+          │   ├── <span class="highlight">virus_total.py</span>     VirusTotal API v3 封装
+          │   └── <span class="highlight">cve_search.py</span>      NVD CVE API 2.0 封装
+          │
+          └── rag/
+              └── <span class="highlight">knowledge_base.py</span>   ChromaDB 安全知识库 · ATT&CK/CVE/OWASP
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- 七、面试关键词速查 -->
+  <!-- ============================================================ -->
+  <section>
+    <h2>七、面试关键词速查表</h2>
+    <table>
+      <thead><tr><th>关键词</th><th>项目中如何体现</th><th>一句话说清</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="tag hot">MCP 协议</span></td>
+          <td>3 个独立 MCP Server，stdio 通信，动态工具发现</td>
+          <td>"把渗透测试工具封装成标准化 MCP Server，Agent 通过统一协议调用"</td>
+        </tr>
+        <tr>
+          <td><span class="tag hot">LangGraph</span></td>
+          <td>StateGraph + 6 节点 + 条件路由 + MemorySaver</td>
+          <td>"用 StateGraph 显式编排多 Agent 协作，不是黑盒 AgentExecutor"</td>
+        </tr>
+        <tr>
+          <td><span class="tag hot">多 Agent 协作</span></td>
+          <td>4 个 Agent: Analyzer/Pentest/Responder/Reporter</td>
+          <td>"职责分离，每个 Agent 只做一件事，system prompt 精炼不出错"</td>
+        </tr>
+        <tr>
+          <td><span class="tag core">ReACT 范式</span></td>
+          <td>ThreatAnalyzer 使用 create_react_agent</td>
+          <td>"模型交替思考和行动，适合需要多步调查的安全分析"</td>
+        </tr>
+        <tr>
+          <td><span class="tag core">RAG</span></td>
+          <td>ChromaDB + ATT&CK/CVE/OWASP 种子数据</td>
+          <td>"先检索相关知识注入上下文，减少 LLM 幻觉"</td>
+        </tr>
+        <tr>
+          <td><span class="tag core">工具调用</span></td>
+          <td>MCP 工具 + VirusTotal + CVE API</td>
+          <td>"两种工具集成方式：MCP 标准协议 + 传统 API 调用"</td>
+        </tr>
+        <tr>
+          <td><span class="tag new">适配器模式</span></td>
+          <td>langchain_bridge.py 动态转换 MCP→LangChain Tool</td>
+          <td>"适配器模式桥接 MCP 和 LangChain 两个不同接口标准"</td>
+        </tr>
+        <tr>
+          <td><span class="tag new">mock 模式</span></td>
+          <td>MCP_MOCK_MODE 环境变量，内置完整模拟数据</td>
+          <td>"无需安装系统工具即可演示完整渗透测试流程"</td>
+        </tr>
+        <tr>
+          <td><span class="tag new">双路径架构</span></td>
+          <td>/analyze (被动) + /pentest (主动)</td>
+          <td>"同一套代码覆盖 SOC 研判和红队侦察两种安全运营场景"</td>
+        </tr>
+        <tr>
+          <td><span class="tag core">FastAPI</span></td>
+          <td>异步端点 + Pydantic 验证 + 自动 Swagger 文档</td>
+          <td>"原生异步支持 LangGraph ainvoke，/docs 可直接调试 API"</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="footer">
+    <p>Security Agent Architecture v2.0 · 生成于 2026-06-04</p>
+    <p>LangGraph + MCP · 4 Agent · 3 MCP Server · 12 工具 · 2 条工作流路径</p>
+  </div>
+
+</div>
+</body>
+</html>
