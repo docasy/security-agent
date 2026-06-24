@@ -221,13 +221,20 @@ class MCPClientManager:
         - 独立扩展：可以分布在不同机器上（改 stdio 为 HTTP/SSE 即可）
         - 独立开发：不同团队可以独立开发和测试各自的 MCP Server
         """
-        if not HAS_MCP_SDK:
-            print(
-                "[MCP] MCP SDK 未安装，自动切换到内存 mock 模式。\n"
-                "[MCP] mock 模式下无需安装 nmap/whatweb/searchsploit 等系统工具。\n"
-                "[MCP] 要使用真实模式: pip install mcp && 安装对应系统工具 && 设 MCP_MOCK_MODE=0",
-                file=sys.stderr,
-            )
+        if not HAS_MCP_SDK or self.mock:
+            if self.mock:
+                print(
+                    "[MCP] Mock 模式已启用 (MCP_MOCK_MODE=1)，使用内存模拟数据。\n"
+                    "[MCP] 无需安装 nmap/whatweb/searchsploit 等系统工具。\n"
+                    "[MCP] 要切换到真实模式: export MCP_MOCK_MODE=0",
+                    file=sys.stderr,
+                )
+            elif not HAS_MCP_SDK:
+                print(
+                    "[MCP] MCP SDK 未安装，自动切换到内存 mock 模式。\n"
+                    "[MCP] 要使用真实模式: pip install mcp && 安装对应系统工具 && 设 MCP_MOCK_MODE=0",
+                    file=sys.stderr,
+                )
             await self._start_mock()
             return
 
