@@ -78,16 +78,27 @@ SEED_KNOWLEDGE = [
 
 
 class SecurityKnowledgeBase:
-    """安全领域 RAG 知识库 — 面试核心：你要能解释 RAG 的检索-增强-生成流程"""
+    """安全领域 RAG 知识库 — 面试核心：你要能解释 RAG 的检索-增强-生成流程
+
+    Embedding 方案：开源免费本地的 bge-small-zh (BAAI 出品, 384维)
+    无需 API Key，首次自动下载模型 (~100MB)，之后完全离线运行
+    """
 
     def __init__(self, persist_dir: Optional[str] = None):
         self.persist_dir = persist_dir or os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
-        # DeepSeek 没有 embedding 接口，这里单独配 embedding base_url
-        embedding_kwargs = {"model": os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")}
-        emb_base = os.getenv("EMBEDDING_BASE_URL", "")
-        if emb_base:
-            embedding_kwargs["base_url"] = emb_base
-        self.embeddings = OpenAIEmbeddings(**embedding_kwargs)
+        # 用开源免费的本地 embedding，不依赖任何外部 API
+        # 面试时能说出 bge-small-zh vs text-embedding-3-small 的选型理由很加分
+        try:
+            from langchain_community.embeddings import HuggingFaceEmbeddings
+            self.embeddings = HuggingFaceEmbeddings(
+                model_name="BAAI/bge-small-zh",
+                model_kwargs={"device": "cpu"},
+                encode_kwargs={"normalize_embeddings": True},
+            )
+        except ImportError:
+            # 降级：如果没有 sentence-transformers，用简易规则匹配
+            print("[RAG] sentence-transformers 未安装，RAG 降级为关键词匹配")
+            self.embeddings = None
         self.vectorstore: Optional[Chroma] = None
 
     def build(self) -> Chroma:
