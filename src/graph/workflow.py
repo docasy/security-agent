@@ -72,6 +72,7 @@ LangGraph 多 Agent 工作流 — 面试核心考点文件
 
 from typing import TypedDict, Annotated, Literal, Optional
 from operator import add
+import os
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -173,7 +174,11 @@ def create_security_agent_workflow():
     #    通过各自的 system prompt 实现不同的角色行为。
     #    这是"依赖注入"思想——Agent 不负责创建 model，由外部传入。
 
-    model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    # 从环境变量读模型名：DeepSeek 用 deepseek-chat，OpenAI 用 gpt-4o-mini
+    model = ChatOpenAI(
+        model=os.getenv("LLM_MODEL", "deepseek-chat"),
+        temperature=0,
+    )
     # temperature=0 的原因：安全分析需要确定性，不应该有"创意"。
 
     analyzer = ThreatAnalyzer(model)
