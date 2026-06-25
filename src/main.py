@@ -327,59 +327,55 @@ async def get_analysis(analysis_id: int):
 @app.post("/chat/{thread_id}")
 async def chat_follow_up(thread_id: str, req: ChatRequest):
     """
-    多轮对话追问端点。
+    多 Agent 多轮追问。
 
-    基于 LangGraph 的 MemorySaver，同一个 thread_id 的多次请求
-    共享完整的对话历史状态。Agent 能"记住"之前的分析结果，
-    用户可以追问「展开第三点」、「这个 IP 有没有关联域名」等。
+    不是简单的"LLM 聊天"——系统会分析追问内容的关键词，
+    自动路由给对应的 Agent（ThreatAnalyzer / PentestAgent /
+    IncidentResponder / ReportGenerator），由该 Agent
+    带着自己的工具和 Skill 来处理追问。
 
-    面试考点：
-    1. MemorySaver 怎么实现多轮对话？（同一 thread_id 复用 configurable 配置）
-    2. 和 ChatGPT 的多轮对话有什么不同？（Agent 的记忆包含工具调用结果和状态变化）
-    3. 局限？（MemorySaver 存内存，重启丢失；生产应换 SqliteSaver 或 PostgresSaver）
+    示例：
+      "这个 IP 关联什么域名" → 路由给 ThreatAnalyzer（调 VT API）
+      "帮我扫一下 8080 端口"  → 路由给 PentestAgent（调 MCP 工具链）
+      "P0 响应步骤是什么"      → 路由给 IncidentResponder
     """
     wf = await get_workflow()
-    config = {"configurable": {"thread_id": thread_id}}
 
-    # 先检查是否有历史记录——从 SQLite 查该 thread 的最近分析
+    # 从 SQLite 查该 thread 的历史，确认有分析记录
     db = get_db()
     history = db.list_by_thread(thread_id)
-
-    # 如果没有任何历史，这个 thread 还没做过分析，引导用户先提交分析
     if not history:
         raise HTTPException(
             400,
-            f"会话 {thread_id} 没有分析历史。请先用 /analyze 或 /pentest 提交初始分析，"
-            f"然后用此端点追问。",
+            f"会话 {thread_id} 没有分析历史。请先用 /analyze 或 /pentest 提交初始分析。",
         )
 
-    # 获取最近一次分析的摘要作为上下文
     last = history[-1]
-    context = (
-        f"[之前进行了{last['task_type']}分析]\n"
-        f"目标/告警: {last['input_data']}\n"
-        f"分析结果摘要: {last['analysis_result'][:500] if last['analysis_result'] else '无'}"
-    )
+    task_type = last["task_type"]
+    target = last["input_data"]
 
-    # 以新的 HumanMessage 继续对话
-    prompt = f"""{context}
+    # 用 MemorySaver 恢复之前的状态，注入追问
+    config = {"configurable": {"thread_id": thread_id}}
 
-用户追问: {req.message}
+    # 注入追问字段，让 followup_router 路由到 handle_followup 节点
+    result = await wf.ainvoke({
+        "task_type": task_type,
+        "target": target if task_type == "pentest" else "",
+        "alert_data": "" if task_type == "pentest" else target,
+        "followup_question": req.message,    # ← 写入追问
+        "followup_target_agent": "auto",      # ← 自动路由
+        "analysis_result": last.get("analysis_result", ""),
+        "response_plan": last.get("response_plan", ""),
+        "messages": [],
+    }, config=config)
 
-请基于之前的分析结果回答用户的问题。如果问题需要调用工具，请调用相应工具获取最新信息。"""
-
-    result = await wf.ainvoke(
-        {"messages": [], "alert_data": prompt},
-        config=config,
-    )
-
-    # 获取最后一条消息作为回复
-    messages = result.get("messages", [])
-    reply = messages[-1].content if messages else "无法生成回复"
+    reply = result.get("followup_reply", "无法生成回复")
+    target_agent = result.get("followup_target_agent", "unknown")
 
     return {
         "thread_id": thread_id,
         "question": req.message,
+        "routed_to_agent": target_agent,  # 告诉了用户追问给了哪个 Agent
         "reply": reply,
         "previous_analysis_id": last.get("id"),
     }

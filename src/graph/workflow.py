@@ -131,7 +131,14 @@ class SecurityAgentState(TypedDict):
 
     # 控制流
     severity: str                # 事件严重级别（Critical/High/Medium/Low）
-    next_step: str               # 条件路由的关键字段：
+    next_step: str               # 条件路由的关键字段
+
+    # 多轮对话追问
+    # 用户通过 /chat/{thread_id} 追问某个 Agent 时写入
+    followup_question: str       # 用户的追问内容
+    followup_reply: str          # Agent 的回复
+    followup_target_agent: str   # 追问路由到哪个 Agent:
+      # "analyzer" | "pentest" | "responder" | "reporter" | "auto"：
       # "retrieve_knowledge" → 走 RAG 路径
       # "run_pentest" → 走渗透测试路径
       # "plan_response" → 进入响应计划
@@ -373,6 +380,113 @@ def create_security_agent_workflow():
         return {"final_report": report, "next_step": "done"}
 
     # ==================================================================
+    # 节点 5: 多轮追问（/chat 端点用）
+    # ==================================================================
+
+    async def handle_followup(state: SecurityAgentState) -> dict:
+        """
+        处理多轮追问——根据追问内容路由给对应的 Agent。
+
+        面试考点：
+        1. 多 Agent 多轮对话怎么实现？（按领域路由追问到对应 Agent）
+        2. 为什么不用通用 LLM 回答？（每个 Agent 有自己的工具和 skill，
+           追问"IOC 关联"要调 VT API，追问"防护步骤"要调响应框架，通用 LLM 做不了）
+        3. MemorySaver 的作用？（保存完整状态，追问时复用之前的分析结果）
+        """
+        question = state.get("followup_question", "")
+        if not question:
+            return {"followup_reply": "没有收到追问内容。"}
+
+        target = state.get("followup_target_agent", "auto")
+        task_type = state.get("task_type", "alert")
+
+        # ---- 关键词路由：判断追问属于哪个 Agent 的领域 ----
+        q_lower = question.lower()
+        if target == "auto":
+            # IOC/威胁/漏洞 相关 → ThreatAnalyzer
+            if any(kw in q_lower for kw in ["ip", "ioc", "哈希", "域名", "cve", "病毒", "误报", "vt", "virustotal"]):
+                target = "analyzer"
+            # 端口/服务/指纹/扫描 相关 → PentestAgent
+            elif any(kw in q_lower for kw in ["端口", "服务", "扫描", "指纹", "nmap", "whatweb", "exploitdb", "攻击面", "漏洞利用"]):
+                target = "pentest"
+            # 修复/封禁/响应/时间线 相关 → IncidentResponder
+            elif any(kw in q_lower for kw in ["修复", "封禁", "响应", "计划", "措施", "p0", "p1", "步骤", "怎么办", "如何处置"]):
+                target = "responder"
+            # 报告/格式/总结 相关 → ReportGenerator
+            elif any(kw in q_lower for kw in ["报告", "总结", "格式", "摘要"]):
+                target = "reporter"
+            # 默认给分析 Agent（最常见）
+            else:
+                target = "analyzer"
+
+        # ---- 按领域调用对应 Agent ----
+        analysis = state.get("analysis_result", "")
+        response_plan = state.get("response_plan", "")
+        target_info = state.get("target", "") or state.get("alert_data", "")
+
+        if target == "analyzer":
+            # ThreatAnalyzer 带工具回答追问（可以调 VT/CVE）
+            agent_msg = (
+                f"分析背景: {target_info}\n"
+                f"之前的研判: {analysis[:800] if analysis else '暂无'}\n\n"
+                f"用户追问: {question}\n\n"
+                "基于你的安全分析专业知识回答。如果可以调用工具验证，请调用。"
+            )
+            agent_instance = analyzer.create_agent()
+            result = await agent_instance.ainvoke(
+                {"messages": [HumanMessage(content=agent_msg)]}
+            )
+            reply = result["messages"][-1].content
+
+        elif target == "pentest":
+            # PentestAgent 可以调 MCP 工具链
+            pentest = PentestAgent(model)
+            pentest.mcp = None  # reset，让 ensure_mcp 重新连接
+            await pentest.ensure_mcp()
+            findings = await pentest.run_with_mcp_tools(target_info)
+            followup_report = await pentest.generate_report_from_findings(
+                f"{target_info} - 追问: {question}", findings
+            )
+            reply = followup_report
+
+        elif target == "responder":
+            # IncidentResponder 生成更新的响应计划
+            msg = (
+                f"之前的分析: {analysis[:500] if analysis else '暂无'}\n"
+                f"之前的响应计划: {response_plan[:500] if response_plan else '暂无'}\n\n"
+                f"用户追问: {question}\n\n"
+                "请基于你的应急响应专业知识，给出具体的、可执行的回答。"
+            )
+            plan = await responder.generate_response_plan(msg)
+            reply = plan
+
+        elif target == "reporter":
+            # ReportGenerator 生成有针对性的报告片段
+            msg = (
+                f"分析内容: {analysis[:500] if analysis else '暂无'}\n"
+                f"响应计划: {response_plan[:500] if response_plan else '暂无'}\n\n"
+                f"用户追问: {question}\n\n"
+                "请按你的报告结构回答这个问题。"
+            )
+            report = await reporter.generate_report(target_info, analysis, response_plan)
+            reply = report
+
+        else:
+            reply = f"无法路由追问到合适的 Agent（target={target}）。"
+
+        return {
+            "followup_reply": reply,
+            "followup_target_agent": target,
+            "next_step": "done",
+        }
+
+    def followup_router(state: SecurityAgentState) -> Literal["handle_followup", END]:
+        """如果收到了追问就进入追问节点，否则结束"""
+        if state.get("followup_question", ""):
+            return "handle_followup"
+        return END
+
+    # ==================================================================
     # 构建状态图
     # ==================================================================
     # 以下是 LangGraph StateGraph 的组装过程 ——
@@ -388,6 +502,7 @@ def create_security_agent_workflow():
     workflow.add_node("run_pentest", run_pentest)
     workflow.add_node("plan_response", plan_response)
     workflow.add_node("generate_report", generate_final_report)
+    workflow.add_node("handle_followup", handle_followup)  # ← 多轮追问节点
 
     # 3. 定义执行流程
 
@@ -409,9 +524,16 @@ def create_security_agent_workflow():
     # 渗透测试路径: 渗透扫描 → 响应计划
     workflow.add_edge("run_pentest", "plan_response")
 
-    # 两条路径汇合: 响应计划 → 报告生成 → 结束
+    # 两条路径汇合: 响应计划 → 报告生成
     workflow.add_edge("plan_response", "generate_report")
-    workflow.add_edge("generate_report", END)
+
+    # 报告生成后：如果有追问就进入追问节点，否则结束
+    workflow.add_conditional_edges(
+        "generate_report",
+        followup_router,
+        {"handle_followup": "handle_followup", END: END},
+    )
+    workflow.add_edge("handle_followup", END)
 
     # 4. MemorySaver — 持久化状态存储
     # 【面试考点：MemorySaver 的作用？】
