@@ -84,10 +84,8 @@ class ThreatAnalyzer:
     @property
     def system_prompt(self) -> str:
         """
-        从 agency-agents 仓库加载 Security Engineer 的标准化 Skill 定义，
-        直接作为 system prompt 注入 LLM。
-
-        Skill 包含：角色定位 + 对抗性思维框架 + OWASP 方法论 + 8 条铁律 + 输出模板
-        是原来简短手写 prompt 的全面升级。
+        从 agency-agents 加载 Threat Detection Engineer 标准化 Skill。
+        蓝队/SOC 方向：SIEM 规则编写、威胁狩猎、MITRE ATT&CK 覆盖、
+        告警研判方法论。跟 Analyzer「收到告警→研判结论」的职责完美吻合。
         """
-        return loader.load("security-engineer")
+        return loader.load("threat-detection-engineer")
