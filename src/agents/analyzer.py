@@ -6,6 +6,7 @@ from langgraph.prebuilt import create_react_agent
 
 from src.tools.virus_total import VirusTotalTool
 from src.tools.cve_search import CVESearchTool
+from src.skills.loader import loader
 
 
 class ThreatAnalyzer:
@@ -69,7 +70,12 @@ class ThreatAnalyzer:
                 return f"CVE 查询失败: {e}"
 
         self._tools = [query_ip_reputation, query_file_hash, search_cve]
-        return create_react_agent(self.model, self._tools)
+        # 用 agency-agent 的 Security Engineer Skill 定义注入系统角色
+        # 替代原来 6 行的简短 system prompt，获得完整的 AppSec 方法论
+        return create_react_agent(
+            self.model, self._tools,
+            state_modifier=self.system_prompt,  # ← 注入标准化 Skill
+        )
 
     @property
     def tools(self):
@@ -77,12 +83,11 @@ class ThreatAnalyzer:
 
     @property
     def system_prompt(self) -> str:
-        return (
-            "你是一名资深安全分析师（SOC Analyst），负责对安全告警进行初步研判。\n"
-            "你的工作流程：\n"
-            "1. 理解告警内容，提取关键 IOC（IP/域名/哈希）\n"
-            "2. 调用 VirusTotal 查询 IOC 的威胁情报\n"
-            "3. 调用 CVE 搜索关联漏洞\n"
-            "4. 给出研判结论：误报(False Positive) / 需关注(Suspicious) / 确认威胁(Confirmed Threat)\n"
-            "5. 建议下一步行动"
-        )
+        """
+        从 agency-agents 仓库加载 Security Engineer 的标准化 Skill 定义，
+        直接作为 system prompt 注入 LLM。
+
+        Skill 包含：角色定位 + 对抗性思维框架 + OWASP 方法论 + 8 条铁律 + 输出模板
+        是原来简短手写 prompt 的全面升级。
+        """
+        return loader.load("security-engineer")

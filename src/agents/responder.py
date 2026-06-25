@@ -3,6 +3,8 @@
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
+from src.skills.loader import loader
+
 
 class IncidentResponder:
     """
@@ -35,10 +37,11 @@ class IncidentResponder:
 
     @property
     def system_prompt(self) -> str:
-        return (
-            "你是一名安全事件响应专家，专注于在安全事件发生后制定可执行的响应计划。\n"
-            "原则：安全第一，在不清楚影响范围时采取保守策略。\n"
-            "区分自动化操作和人工决策：\n"
-            "- 可自动化：防火墙封禁IP、账号禁用、日志收集\n"
-            "- 需人工：数据恢复、法务通知、对外披露\n"
-        )
+        """
+        从 agency-agents 加载 Incident Response Commander 标准化 Skill。
+        444 行专业应急响应方法论，替代原来 5 行简短 prompt。
+
+        Skill 包含：SEV1-SEV4 分级框架、ICS 角色模型、
+        事后复盘流程、on-call 最佳实践。
+        """
+        return loader.load("incident-response-commander")
