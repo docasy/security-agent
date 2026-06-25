@@ -177,15 +177,12 @@ def _sse_event(data: dict) -> str:
 
 async def _stream_workflow(task_type: str, thread_id: str, alert_data: str, target: str):
     """
-    通用工作流流式生成器。
-
-    利用 LangGraph 的 astream() 方法，每完成一个节点就推一条 SSE 事件给前端。
-    前端可以实时看到：「正在检索知识库… → 正在分析威胁… → 正在生成响应计划…」
+    逐字流式工作流。用 astream_events() 替代 astream()，不仅推送节点完成事件，
+    还推送 LLM 每生成一个 token 的内容。前端效果：文字像打字机一样逐字出现。
 
     面试考点：
-    1. LangGraph astream vs ainvoke？（astream 逐节点返回，适合长任务进度展示）
-    2. SSE vs WebSocket？（SSE 单向服务器→客户端，更简单，Agent 场景够用）
-    3. 为什么不用 asyncio.Queue？（astream 本身就是 async generator，直接迭代即可）
+    1. astream_events vs astream？（events 粒度到 token 级，stream 粒度到节点级）
+    2. SSE 流式输出怎么实现？（async generator + StreamingResponse + text/event-stream）
     """
     wf = await get_workflow()
     config = {"configurable": {"thread_id": thread_id}}
@@ -196,58 +193,70 @@ async def _stream_workflow(task_type: str, thread_id: str, alert_data: str, targ
         "messages": [],
     }
 
-    node_labels = {
-        "route_entry": ("🔀 路由分发", "正在判断任务类型…"),
-        "retrieve_knowledge": ("📚 RAG 检索", "正在从安全知识库检索相关知识…"),
-        "analyze_threat": ("🔍 威胁分析", "ReACT Agent 正在提取 IOC 并查询威胁情报…"),
-        "run_pentest": ("💣 渗透扫描", "MCP 工具链执行中: nmap → whatweb → exploitdb…"),
-        "plan_response": ("📋 响应计划", "正在生成分阶段响应时间线 (P0→P3)…"),
-        "generate_report": ("📝 生成报告", "正在整合所有信息为结构化报告…"),
-    }
-
     final_result = {}
+    current_node = ""
 
-    # astream() 每次 yield 一个节点完成事件
-    async for event in wf.astream(state_input, config=config):
-        for node_name, node_output in event.items():
-            label, desc = node_labels.get(node_name, (node_name, f"正在执行 {node_name}…"))
+    # astream_events() 比 astream() 更细粒度：
+    # - on_chat_model_stream: LLM 每输出一个 token 触发一次
+    # - on_tool_start/end: 工具调用开始/结束
+    # - 节点完成时也有对应事件
+    async for event in wf.astream_events(state_input, config=config, version="v2"):
+        kind = event["event"]
 
-            # 合并节点输出到最终结果
-            if isinstance(node_output, dict):
-                final_result.update(node_output)
+        # ---- LLM 逐 token 输出（核心：让前端看到打字机效果）----
+        if kind == "on_chat_model_stream":
+            chunk = event["data"]["chunk"]
+            if hasattr(chunk, "content") and chunk.content:
+                yield _sse_event({
+                    "type": "token",
+                    "content": chunk.content,
+                    "node": current_node,
+                })
 
+        # ---- 工具调用 ----
+        elif kind == "on_tool_start":
             yield _sse_event({
-                "node": node_name,
-                "label": label,
-                "status": desc,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "type": "tool_start",
+                "tool": event["name"],
+                "node": current_node,
+            })
+        elif kind == "on_tool_end":
+            yield _sse_event({
+                "type": "tool_end",
+                "tool": event["name"],
+                "node": current_node,
             })
 
-    # 所有节点完成，推送最终结果
+        # ---- 节点完成（持久化最终结果）----
+        elif kind == "on_chain_end":
+            if event.get("name") in [
+                "analyze_threat", "run_pentest", "plan_response", "generate_report",
+                "retrieve_knowledge", "route_entry",
+            ]:
+                node_name = event["name"]
+                current_node = node_name
+                output = event["data"].get("output", {})
+                if isinstance(output, dict):
+                    final_result.update(output)
+
+    # 最终结果
     analysis = final_result.get("analysis_result", "")
     plan = final_result.get("response_plan", "")
     report = final_result.get("final_report", "")
 
-    # 持久化
     db = get_db()
     record_id = db.save(AnalysisRecord(
-        task_type=task_type,
-        thread_id=thread_id,
+        task_type=task_type, thread_id=thread_id,
         input_data=target or alert_data,
-        analysis_result=analysis,
-        response_plan=plan,
-        final_report=report,
+        analysis_result=analysis, response_plan=plan, final_report=report,
     ))
 
     yield _sse_event({
-        "node": "done",
-        "label": "✅ 完成",
-        "status": "分析完成",
+        "type": "done",
         "analysis_id": record_id,
         "analysis": analysis,
         "response_plan": plan,
         "report": report,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
     })
 
 

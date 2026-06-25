@@ -1,2 +1,3 @@
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:#0b1120;color:#e2e8f0;line-height:1.6}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}

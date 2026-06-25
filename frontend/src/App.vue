@@ -136,6 +136,9 @@ async function readStream(resp, streamMsg) {
   const reader = resp.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  streamMsg.toolCalls = []   // 正在执行的工具列表
+  streamMsg.content = ''     // 累积 token
+
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
@@ -146,14 +149,28 @@ async function readStream(resp, streamMsg) {
       if (line.startsWith('data: ')) {
         try {
           const data = JSON.parse(line.slice(6))
-          if (!streamMsg.steps) streamMsg.steps = []
-          streamMsg.steps.push(data)
-          if (data.node === 'done') {
-            streamMsg.content = data.analysis || data.report || ''
+
+          if (data.type === 'token') {
+            // ---- LLM 逐字输出：追加到 content ----
+            streamMsg.content += data.content
+
+          } else if (data.type === 'tool_start') {
+            // ---- 工具开始执行 ----
+            if (!streamMsg.toolCalls) streamMsg.toolCalls = []
+            streamMsg.toolCalls.push({ name: data.tool, status: 'running' })
+
+          } else if (data.type === 'tool_end') {
+            // ---- 工具执行完毕 ----
+            const tc = (streamMsg.toolCalls || []).find(t => t.name === data.tool && t.status === 'running')
+            if (tc) tc.status = 'done'
+
+          } else if (data.type === 'done') {
+            // ---- 最终完成 ----
             streamMsg.responsePlan = data.response_plan
             streamMsg.report = data.report
             streamMsg.analysisId = data.analysis_id
           }
+
           await nextTick()
           scrollToBottom()
         } catch {}
@@ -253,16 +270,24 @@ onMounted(loadThreads)
 
         <!-- Assistant -->
         <div v-else style="display:flex;flex-direction:column">
-          <!-- Streaming progress -->
-          <div v-if="msg.type==='streaming' && msg.steps" style="margin-bottom:6px">
-            <div v-for="(s, j) in msg.steps" :key="j"
-              style="display:inline-block;padding:2px 10px;border-radius:4px;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);font-size:0.75em;color:#38bdf8;margin-right:6px;margin-bottom:4px">
-              {{ s.label }} {{ s.node==='done' ? '✅' : '' }}
-            </div>
+          <!-- Tool calls in progress -->
+          <div v-if="msg.toolCalls && msg.toolCalls.length>0" style="margin-bottom:6px">
+            <span v-for="(tc, j) in msg.toolCalls" :key="j"
+              style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.72em;margin-right:6px;margin-bottom:4px"
+              :style="{background: tc.status==='done' ? 'rgba(74,222,128,0.1)' : 'rgba(251,191,36,0.1)', border: '1px solid ' + (tc.status==='done' ? 'rgba(74,222,128,0.3)' : 'rgba(251,191,36,0.3)'), color: tc.status==='done' ? '#4ade80' : '#fbbf24'}">
+              {{ tc.status==='running' ? '⚡' : '✅' }} {{ tc.name }}
+            </span>
           </div>
 
-          <!-- Text content -->
-          <div v-if="msg.content" style="max-width:85%;padding:10px 16px;border-radius:12px 12px 12px 0;background:#111827;border:1px solid #1e293b;font-size:0.88em;line-height:1.7">
+          <!-- Streaming token text -->
+          <div v-if="msg.content || (msg.toolCalls && msg.toolCalls.length>0) && !sending"
+            style="max-width:85%;padding:10px 16px;border-radius:12px 12px 12px 0;background:#111827;border:1px solid #1e293b;font-size:0.88em;line-height:1.7">
+            <pre style="white-space:pre-wrap;font-family:inherit;margin:0;line-height:1.75">{{ msg.content }}</pre>
+            <span v-if="sending" style="display:inline-block;width:8px;height:16px;background:#38bdf8;animation:blink 0.6s infinite;vertical-align:middle;margin-left:2px"></span>
+          </div>
+
+          <!-- Static text content (non-streaming) -->
+          <div v-if="msg.content && msg.type !== 'streaming'" style="max-width:85%;padding:10px 16px;border-radius:12px 12px 12px 0;background:#111827;border:1px solid #1e293b;font-size:0.88em;line-height:1.7">
             <pre style="white-space:pre-wrap;font-family:inherit;margin:0;line-height:1.75">{{ msg.content }}</pre>
           </div>
 
