@@ -1,31 +1,18 @@
 <script setup>
-import { ref, reactive, nextTick } from 'vue'
+import { ref, nextTick, onMounted, watch } from 'vue'
 
 const API = '/api'
-const activeTab = ref('pentest')
 
-// ======== Alert / Pentest Form ========
-const alertInput = ref('')
-const pentestTarget = ref('')
-const threadId = ref('default')
-const loading = ref(false)
-const result = ref(null) // { analysis, response_plan, report, analysis_id, task_type }
+// ===== Threads =====
+const threads = ref([])
+const activeThread = ref(null) // { id: string, title: string, messages: [...] }
+const sidebarOpen = ref(true)
 
-// ======== Streaming ========
-const streaming = ref(false)
-const streamLabels = reactive([]) // [{label, status, node}]
+// ===== Message input =====
+const input = ref('')
+const sending = ref(false)
 
-// ======== Chat ========
-const chatThreadId = ref('default')
-const chatMsg = ref('')
-const chatLoading = ref(false)
-const chatReply = ref(null)
-const chatAgent = ref('')
-
-// ======== History ========
-const history = ref([])
-
-// ======== Helpers ========
+// ===== Helpers =====
 function api(path, opts = {}) {
   return fetch(`${API}${path}`, {
     headers: { 'Content-Type': 'application/json' },
@@ -33,239 +20,284 @@ function api(path, opts = {}) {
   }).then(r => r.ok ? r.json() : r.text().then(t => { throw new Error(t) }))
 }
 
-async function loadHistory() {
-  try { history.value = await api('/analyses') } catch {}
+function genThreadId() {
+  return 't-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6)
 }
 
-async function runAnalysis() {
-  if (!alertInput.value.trim()) return
-  loading.value = true; result.value = null
+// ===== Load threads from SQLite history =====
+async function loadThreads() {
   try {
-    result.value = await api('/analyze', {
-      method: 'POST',
-      body: JSON.stringify({ alert_data: alertInput.value, task_type: 'alert', thread_id: threadId.value }),
-    })
-  } catch (e) { result.value = { error: e.message } }
-  loading.value = false
-  loadHistory()
-}
-
-async function runPentest() {
-  if (!pentestTarget.value.trim()) return
-  loading.value = true; result.value = null
-  try {
-    result.value = await api('/pentest', {
-      method: 'POST',
-      body: JSON.stringify({ target: pentestTarget.value, task_type: 'pentest', thread_id: threadId.value }),
-    })
-  } catch (e) { result.value = { error: e.message } }
-  loading.value = false
-  loadHistory()
-}
-
-async function runStream(mode) {
-  const input = mode === 'pentest' ? pentestTarget.value : alertInput.value
-  if (!input.trim()) return
-  streaming.value = true; result.value = null
-  streamLabels.splice(0, streamLabels.length)
-
-  const body = mode === 'pentest'
-    ? JSON.stringify({ target: input, task_type: 'pentest', thread_id: threadId.value })
-    : JSON.stringify({ alert_data: input, task_type: 'alert', thread_id: threadId.value })
-
-  try {
-    const resp = await fetch(`${API}/${mode}/stream`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
-    })
-    const reader = resp.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const data = JSON.parse(line.slice(6))
-            streamLabels.push(data)
-            if (data.node === 'done') {
-              result.value = {
-                analysis: data.analysis,
-                response_plan: data.response_plan,
-                report: data.report,
-                analysis_id: data.analysis_id,
-                task_type: mode,
-              }
-            }
-            await nextTick()
-          } catch {}
+    const raw = await api('/analyses?limit=50')
+    // Group by thread_id
+    const map = {}
+    for (const r of raw) {
+      if (!map[r.thread_id]) {
+        map[r.thread_id] = {
+          id: r.thread_id,
+          title: r.input_data?.slice(0, 40) || r.task_type,
+          task_type: r.task_type,
+          messages: [],
+          lastId: r.id,
+          createdAt: r.created_at,
         }
       }
+      // Add analysis result as assistant message
+      if (r.analysis_result) {
+        map[r.thread_id].messages.push({
+          role: 'assistant',
+          content: r.analysis_result,
+          type: r.task_type,
+          analysisId: r.id,
+          responsePlan: r.response_plan,
+          report: r.final_report,
+          createdAt: r.created_at,
+        })
+      }
     }
-  } catch (e) { result.value = { error: e.message } }
-  streaming.value = false
-  loadHistory()
+    threads.value = Object.values(map).sort((a, b) => b.lastId - a.lastId)
+    // Auto-select latest
+    if (threads.value.length > 0 && !activeThread.value) {
+      activeThread.value = threads.value[0]
+    }
+  } catch {}
 }
 
-async function sendChat() {
-  if (!chatMsg.value.trim()) return
-  chatLoading.value = true; chatReply.value = null
+// ===== Send message =====
+async function send() {
+  const text = input.value.trim()
+  if (!text || sending.value) return
+
+  sending.value = true
+
+  // Create thread if needed
+  if (!activeThread.value) {
+    const tid = genThreadId()
+    activeThread.value = { id: tid, title: text.slice(0, 40), messages: [] }
+  }
+
+  const thread = activeThread.value
+  const isFirst = thread.messages.length === 0
+
+  // Add user message
+  const userMsg = { role: 'user', content: text }
+  thread.messages.push(userMsg)
+  input.value = ''
+
+  // Add streaming placeholder
+  const streamMsg = { role: 'assistant', content: '', type: 'streaming', steps: [] }
+  thread.messages.push(streamMsg)
+  await nextTick()
+  scrollToBottom()
+
   try {
-    const resp = await api(`/chat/${chatThreadId.value}`, {
-      method: 'POST',
-      body: JSON.stringify({ message: chatMsg.value }),
-    })
-    chatReply.value = resp.reply
-    chatAgent.value = resp.routed_to_agent || ''
-  } catch (e) { chatReply.value = 'Error: ' + e.message }
-  chatLoading.value = false
+    if (isFirst) {
+      // First message: auto-detect intent
+      const isPentest = /扫描|渗透|端口|目标|攻击面|侦察|nmap|exploit/i.test(text)
+      const mode = isPentest ? 'pentest' : 'analyze'
+      thread.task_type = mode
+
+      const body = isPentest
+        ? JSON.stringify({ target: extractTarget(text) || text, task_type: 'pentest', thread_id: thread.id })
+        : JSON.stringify({ alert_data: text, task_type: 'alert', thread_id: thread.id })
+
+      const resp = await fetch(`${API}/${mode}/stream`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+      })
+      await readStream(resp, streamMsg)
+    } else {
+      // Follow-up: use /chat
+      const resp = await api(`/chat/${thread.id}`, {
+        method: 'POST',
+        body: JSON.stringify({ message: text }),
+      })
+      streamMsg.content = resp.reply
+      streamMsg.type = resp.routed_to_agent || 'chat'
+    }
+  } catch (e) {
+    streamMsg.content = '❌ ' + e.message
+    streamMsg.type = 'error'
+  }
+
+  sending.value = false
+  // Reload threads to pick up new SQLite records
+  setTimeout(loadThreads, 1000)
 }
 
-function fmt(s) {
-  if (!s) return ''
-  return s.replace(/^### /gm, '').replace(/\*\*(.*?)\*\*/g, '$1')
+function extractTarget(text) {
+  // Try to extract IP or domain from message
+  const ip = text.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/)
+  if (ip) return ip[0]
+  const domain = text.match(/\b[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+/)
+  if (domain) return domain[0]
+  return text
 }
 
-loadHistory()
+async function readStream(resp, streamMsg) {
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        try {
+          const data = JSON.parse(line.slice(6))
+          if (!streamMsg.steps) streamMsg.steps = []
+          streamMsg.steps.push(data)
+          if (data.node === 'done') {
+            streamMsg.content = data.analysis || data.report || ''
+            streamMsg.responsePlan = data.response_plan
+            streamMsg.report = data.report
+            streamMsg.analysisId = data.analysis_id
+          }
+          await nextTick()
+          scrollToBottom()
+        } catch {}
+      }
+    }
+  }
+}
+
+function scrollToBottom() {
+  nextTick(() => {
+    const el = document.getElementById('chat-area')
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+function newThread() {
+  activeThread.value = null
+  input.value = ''
+}
+
+function selectThread(t) {
+  activeThread.value = t
+}
+
+onMounted(loadThreads)
 </script>
 
 <template>
-<div style="max-width:1100px;margin:0 auto;padding:16px">
+<div style="display:flex;height:100vh;background:#0b1120;color:#e2e8f0">
 
-  <!-- Header -->
-  <div style="text-align:center;padding:24px 0">
-    <h1 style="font-size:1.5em;background:linear-gradient(135deg,#38bdf8,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent">
-      Security Agent — 多智能体安全分析系统
-    </h1>
-    <p style="color:#94a3b8;font-size:0.85em;margin-top:4px">LangGraph + MCP | 4 Agent · 3 MCP Server</p>
-  </div>
-
-  <!-- Tabs -->
-  <div style="display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid #1e293b;padding-bottom:0">
-    <button v-for="t in [
-      {k:'pentest',label:'💣 渗透测试'},{k:'analyze',label:'🔍 告警分析'},
-      {k:'chat',label:'💬 追问'},{k:'history',label:'📋 历史'}
-    ]" :key="t.k"
-      @click="activeTab=t.k"
-      :style="{
-        padding:'8px 18px',border:'none',cursor:'pointer',fontSize:'0.88em',
-        background: activeTab===t.k ? 'rgba(56,189,248,0.1)' : 'transparent',
-        color: activeTab===t.k ? '#38bdf8' : '#94a3b8',
-        borderBottom: activeTab===t.k ? '2px solid #38bdf8' : '2px solid transparent',
-        transition:'all .2s'
-      }"
-    >{{ t.label }}</button>
-  </div>
-
-  <!-- ====== PENTEST ====== -->
-  <div v-if="activeTab==='pentest'" style="display:flex;flex-direction:column;gap:12px">
-    <label style="font-size:0.85em;color:#94a3b8">目标 IP / 域名</label>
-    <input v-model="pentestTarget" @keyup.enter="runStream('pentest')"
-      placeholder="例如: 192.168.1.1 或 example.com"
-      style="padding:10px 14px;border-radius:8px;border:1px solid #334155;background:#111827;color:#e2e8f0;font-size:0.92em;outline:none"
-    />
-    <div style="display:flex;gap:8px">
-      <button @click="runStream('pentest')" :disabled="streaming"
-        style="padding:8px 20px;border-radius:6px;border:none;background:#2dd4bf;color:#0b1120;font-weight:600;cursor:pointer;font-size:0.88em"
-      >🚀 流式扫描</button>
-      <button @click="runPentest" :disabled="loading"
-        style="padding:8px 20px;border-radius:6px;border:1px solid #334155;background:transparent;color:#94a3b8;cursor:pointer;font-size:0.88em"
-      >一次性返回</button>
+  <!-- ===== SIDEBAR ===== -->
+  <aside v-if="sidebarOpen" style="width:260px;border-right:1px solid #1e293b;display:flex;flex-direction:column;background:#0f172a;flex-shrink:0">
+    <div style="padding:16px;border-bottom:1px solid #1e293b">
+      <button @click="newThread"
+        style="width:100%;padding:10px;border-radius:8px;border:1px solid #38bdf8;background:rgba(56,189,248,0.08);color:#38bdf8;font-weight:600;cursor:pointer;font-size:0.88em">
+        + 新对话
+      </button>
     </div>
-  </div>
-
-  <!-- ====== ANALYZE ====== -->
-  <div v-if="activeTab==='analyze'" style="display:flex;flex-direction:column;gap:12px">
-    <label style="font-size:0.85em;color:#94a3b8">安全告警内容</label>
-    <textarea v-model="alertInput" rows="3"
-      placeholder="例如: 检测到来自 45.33.32.156 的异常登录行为，凌晨3点，尝试了5个账户"
-      style="padding:10px 14px;border-radius:8px;border:1px solid #334155;background:#111827;color:#e2e8f0;font-size:0.92em;outline:none;resize:vertical"
-    ></textarea>
-    <div style="display:flex;gap:8px">
-      <button @click="runStream('analyze')" :disabled="streaming"
-        style="padding:8px 20px;border-radius:6px;border:none;background:#818cf8;color:#fff;font-weight:600;cursor:pointer;font-size:0.88em"
-      >🚀 流式分析</button>
-      <button @click="runAnalysis" :disabled="loading"
-        style="padding:8px 20px;border-radius:6px;border:1px solid #334155;background:transparent;color:#94a3b8;cursor:pointer;font-size:0.88em"
-      >一次性返回</button>
-    </div>
-  </div>
-
-  <!-- ====== CHAT ====== -->
-  <div v-if="activeTab==='chat'" style="display:flex;flex-direction:column;gap:12px">
-    <div style="display:flex;gap:8px;align-items:center">
-      <label style="font-size:0.85em;color:#94a3b8;white-space:nowrap">Thread ID:</label>
-      <input v-model="chatThreadId"
-        style="flex:1;padding:8px 12px;border-radius:6px;border:1px solid #334155;background:#111827;color:#e2e8f0;font-size:0.88em"
-      />
-    </div>
-    <input v-model="chatMsg" @keyup.enter="sendChat"
-      placeholder="追问: 这个 IP 有没有关联的恶意域名？"
-      style="padding:10px 14px;border-radius:8px;border:1px solid #334155;background:#111827;color:#e2e8f0;font-size:0.92em;outline:none"
-    />
-    <button @click="sendChat" :disabled="chatLoading"
-      style="padding:8px 20px;border-radius:6px;border:none;background:#fbbf24;color:#0b1120;font-weight:600;cursor:pointer;font-size:0.88em;align-self:flex-start"
-    >💬 发送追问</button>
-    <div v-if="chatLoading" style="color:#fbbf24;font-size:0.85em">Agent 正在回答...</div>
-    <div v-if="chatReply" style="background:#111827;border:1px solid #1e293b;border-radius:8px;padding:16px;margin-top:8px">
-      <div v-if="chatAgent" style="font-size:0.75em;color:#38bdf8;margin-bottom:6px">→ 路由到: {{ chatAgent }}</div>
-      <pre style="white-space:pre-wrap;font-size:0.85em;color:#e2e8f0;line-height:1.7;font-family:inherit">{{ chatReply }}</pre>
-    </div>
-  </div>
-
-  <!-- ====== HISTORY ====== -->
-  <div v-if="activeTab==='history'">
-    <button @click="loadHistory" style="padding:6px 14px;border-radius:6px;border:1px solid #334155;background:transparent;color:#94a3b8;cursor:pointer;font-size:0.85em;margin-bottom:12px">🔄 刷新</button>
-    <div v-if="history.length===0" style="color:#94a3b8;font-size:0.85em">暂无记录</div>
-    <div v-for="r in history" :key="r.id"
-      style="padding:10px 14px;border:1px solid #1e293b;border-radius:8px;margin-bottom:8px;cursor:pointer"
-      @click="async ()=>{ try { result.value = await api('/analyses/'+r.id) } catch {} }">
-      <span style="font-size:0.82em;color:#94a3b8">#{{ r.id }} [{{ r.task_type }}] {{ r.input_data?.slice(0,60) }}...</span>
-      <span style="float:right;font-size:0.75em;color:#64748b">{{ r.created_at }}</span>
-    </div>
-  </div>
-
-  <!-- ====== Streaming Progress ====== -->
-  <div v-if="streamLabels.length>0 && streaming" style="margin-top:12px">
-    <div v-for="(s,i) in streamLabels" :key="i"
-      style="padding:6px 12px;border-radius:6px;background:#111827;border:1px solid #1e293b;margin-bottom:4px;font-size:0.82em">
-      <span style="color:#38bdf8">{{ s.label }}</span>
-      <span style="color:#94a3b8;margin-left:8px">{{ s.status }}</span>
-      <span v-if="s.node==='done'" style="color:#4ade80;margin-left:8px">✅</span>
-    </div>
-  </div>
-
-  <!-- ====== Result ====== -->
-  <div v-if="result && !streaming" style="margin-top:16px">
-    <div v-if="result.error" style="color:#f87171;padding:16px;background:rgba(248,113,113,0.08);border-radius:8px">
-      ❌ {{ result.error }}
-    </div>
-    <template v-else>
-      <div style="font-size:0.8em;color:#64748b;margin-bottom:12px">
-        ID: #{{ result.analysis_id }} | 类型: {{ result.task_type }} |
-        报告: {{ result.report?.length || 0 }} 字 |
-        响应: {{ result.response_plan?.length || 0 }} 字
+    <div style="flex:1;overflow-y:auto;padding:8px">
+      <div v-if="threads.length===0" style="color:#64748b;font-size:0.82em;text-align:center;padding:20px">
+        暂无对话历史
       </div>
-      <!-- Report -->
-      <details style="margin-bottom:12px" open>
-        <summary style="cursor:pointer;color:#38bdf8;font-weight:600;padding:8px 0">📝 分析报告</summary>
-        <pre style="white-space:pre-wrap;font-size:0.85em;color:#e2e8f0;line-height:1.7;font-family:inherit;padding:16px;background:#111827;border-radius:8px;border:1px solid #1e293b;max-height:600px;overflow-y:auto">{{ result.analysis || result.report }}</pre>
-      </details>
-      <!-- Plan -->
-      <details style="margin-bottom:12px">
-        <summary style="cursor:pointer;color:#fbbf24;font-weight:600;padding:8px 0">📋 响应计划</summary>
-        <pre style="white-space:pre-wrap;font-size:0.85em;color:#e2e8f0;line-height:1.7;font-family:inherit;padding:16px;background:#111827;border-radius:8px;border:1px solid #1e293b;max-height:400px;overflow-y:auto">{{ result.response_plan }}</pre>
-      </details>
-      <!-- Full Report -->
-      <details>
-        <summary style="cursor:pointer;color:#4ade80;font-weight:600;padding:8px 0">📄 完整 Markdown 报告</summary>
-        <pre style="white-space:pre-wrap;font-size:0.85em;color:#e2e8f0;line-height:1.7;font-family:inherit;padding:16px;background:#111827;border-radius:8px;border:1px solid #1e293b;max-height:500px;overflow-y:auto">{{ result.report }}</pre>
-      </details>
-    </template>
+      <div v-for="t in threads" :key="t.id"
+        @click="selectThread(t)"
+        :style="{
+          padding:'10px 12px',borderRadius:'8px',cursor:'pointer',marginBottom:'4px',
+          fontSize:'0.84em',lineHeight:'1.4',
+          background: activeThread?.id===t.id ? 'rgba(56,189,248,0.08)' : 'transparent',
+          border: activeThread?.id===t.id ? '1px solid rgba(56,189,248,0.3)' : '1px solid transparent',
+        }">
+        <div style="color:#e2e8f0;overflow:hidden;textOverflow:'ellipsis';whiteSpace:'nowrap'">{{ t.title }}</div>
+        <div style="color:#64748b;font-size:0.82em;margin-top:2px">
+          {{ t.task_type==='pentest' ? '💣' : '🔍' }} {{ t.messages.length }} 轮
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===== TOGGLE SIDEBAR ===== -->
+  <button @click="sidebarOpen=!sidebarOpen"
+    style="border:none;background:transparent;color:#64748b;cursor:pointer;font-size:1.2em;padding:0 8px;flex-shrink:0"
+    :title="sidebarOpen ? '收起侧边栏' : '展开侧边栏'">
+    {{ sidebarOpen ? '◀' : '▶' }}
+  </button>
+
+  <!-- ===== MAIN CHAT ===== -->
+  <div style="flex:1;display:flex;flex-direction:column;min-width:0">
+
+    <!-- Header -->
+    <div style="padding:12px 20px;border-bottom:1px solid #1e293b;font-size:0.85em;color:#64748b;display:flex;align-items:center;gap:8px">
+      <span style="font-weight:700;color:#e2e8f0">Security Agent</span>
+      <span v-if="activeThread?.task_type==='pentest'" style="color:#2dd4bf;font-size:0.82em">| 红队模式</span>
+      <span v-if="activeThread?.task_type==='alert'" style="color:#818cf8;font-size:0.82em">| 蓝队模式</span>
+    </div>
+
+    <!-- Messages -->
+    <div id="chat-area" style="flex:1;overflow-y:auto;padding:16px 20px">
+
+      <!-- Empty state -->
+      <div v-if="!activeThread || activeThread.messages.length===0"
+        style="text-align:center;padding:80px 20px;color:#64748b">
+        <div style="font-size:2em;margin-bottom:16px">🛡️</div>
+        <div style="font-size:1.1em;font-weight:600;color:#94a3b8;margin-bottom:8px">Security Agent — 多智能体安全分析</div>
+        <div style="font-size:0.88em;line-height:1.8">
+          输入 <span style="color:#2dd4bf">IP/域名</span> 进行渗透测试侦察<br>
+          输入 <span style="color:#818cf8">告警内容</span> 进行蓝队威胁研判<br>
+          Agent 会自动判断你的意图，使用对应的安全工具链
+        </div>
+      </div>
+
+      <!-- Message bubbles -->
+      <div v-for="(msg, i) in activeThread?.messages || []" :key="i" style="margin-bottom:16px">
+        <!-- User -->
+        <div v-if="msg.role==='user'" style="display:flex;justify-content:flex-end">
+          <div style="max-width:75%;padding:10px 16px;border-radius:12px 12px 0 12px;background:#1e293b;font-size:0.9em;line-height:1.6">{{ msg.content }}</div>
+        </div>
+
+        <!-- Assistant -->
+        <div v-else style="display:flex;flex-direction:column">
+          <!-- Streaming progress -->
+          <div v-if="msg.type==='streaming' && msg.steps" style="margin-bottom:6px">
+            <div v-for="(s, j) in msg.steps" :key="j"
+              style="display:inline-block;padding:2px 10px;border-radius:4px;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);font-size:0.75em;color:#38bdf8;margin-right:6px;margin-bottom:4px">
+              {{ s.label }} {{ s.node==='done' ? '✅' : '' }}
+            </div>
+          </div>
+
+          <!-- Text content -->
+          <div v-if="msg.content" style="max-width:85%;padding:10px 16px;border-radius:12px 12px 12px 0;background:#111827;border:1px solid #1e293b;font-size:0.88em;line-height:1.7">
+            <pre style="white-space:pre-wrap;font-family:inherit;margin:0;line-height:1.75">{{ msg.content }}</pre>
+          </div>
+
+          <!-- Response plan collapsible -->
+          <details v-if="msg.responsePlan" style="margin-top:8px;margin-left:8px">
+            <summary style="cursor:pointer;color:#fbbf24;font-size:0.82em;font-weight:600">📋 响应计划</summary>
+            <pre style="white-space:pre-wrap;font-size:0.82em;color:#94a3b8;line-height:1.7;font-family:inherit;padding:12px;background:#111827;border-radius:8px;border:1px solid #1e293b;margin-top:4px;max-height:400px;overflow-y:auto">{{ msg.responsePlan }}</pre>
+          </details>
+
+          <!-- Report collapsible -->
+          <details v-if="msg.report" style="margin-top:4px;margin-left:8px">
+            <summary style="cursor:pointer;color:#4ade80;font-size:0.82em;font-weight:600">📄 完整报告</summary>
+            <pre style="white-space:pre-wrap;font-size:0.82em;color:#94a3b8;line-height:1.7;font-family:inherit;padding:12px;background:#111827;border-radius:8px;border:1px solid #1e293b;margin-top:4px;max-height:400px;overflow-y:auto">{{ msg.report }}</pre>
+          </details>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Input bar -->
+    <div style="padding:12px 20px;border-top:1px solid #1e293b">
+      <div style="display:flex;gap:8px">
+        <input v-model="input" @keyup.enter="send" :disabled="sending"
+          :placeholder="sending ? 'Agent 正在分析中...' : (activeThread ? '追问...' : '输入 IP/域名 进行渗透测试，或粘贴告警进行研判...')"
+          style="flex:1;padding:10px 16px;border-radius:10px;border:1px solid #334155;background:#111827;color:#e2e8f0;font-size:0.9em;outline:none"
+        />
+        <button @click="send" :disabled="sending"
+          style="padding:10px 20px;border-radius:10px;border:none;background: sending ? '#334155' : '#38bdf8';color:sending ? '#64748b' : '#0b1120';font-weight:600;cursor:sending ? 'not-allowed' : 'pointer';font-size:0.88em">
+          {{ sending ? '⏳' : '发送' }}
+        </button>
+      </div>
+      <div style="font-size:0.72em;color:#475569;margin-top:4px;text-align:center">
+        所有对话自动持久化 · 左侧可切换历史线程
+      </div>
+    </div>
   </div>
 
 </div>
