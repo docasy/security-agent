@@ -82,7 +82,12 @@ class SecurityKnowledgeBase:
 
     def __init__(self, persist_dir: Optional[str] = None):
         self.persist_dir = persist_dir or os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
-        self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+        # DeepSeek 没有 embedding 接口，这里单独配 embedding base_url
+        embedding_kwargs = {"model": os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")}
+        emb_base = os.getenv("EMBEDDING_BASE_URL", "")
+        if emb_base:
+            embedding_kwargs["base_url"] = emb_base
+        self.embeddings = OpenAIEmbeddings(**embedding_kwargs)
         self.vectorstore: Optional[Chroma] = None
 
     def build(self) -> Chroma:

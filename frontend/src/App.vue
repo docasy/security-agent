@@ -65,7 +65,8 @@ async function loadThreads() {
 // ===== Send message =====
 async function send() {
   const text = input.value.trim()
-  if (!text || sending.value) return
+  if (!text) return
+  if (sending.value) return
 
   sending.value = true
 
@@ -79,12 +80,11 @@ async function send() {
   const isFirst = thread.messages.length === 0
 
   // Add user message
-  const userMsg = { role: 'user', content: text }
-  thread.messages.push(userMsg)
+  thread.messages.push({ role: 'user', content: text })
   input.value = ''
 
   // Add streaming placeholder
-  const streamMsg = { role: 'assistant', content: '', type: 'streaming', steps: [] }
+  const streamMsg = { role: 'assistant', content: '', type: 'streaming', toolCalls: [] }
   thread.messages.push(streamMsg)
   await nextTick()
   scrollToBottom()

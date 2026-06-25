@@ -246,11 +246,15 @@ def create_security_agent_workflow():
         - k 太大（如 k=10）：会引入噪声（精度低），且 Token 消耗大
         - k=3 是经验值，在大多数场景下平衡了精度和召回
         """
-        kb.load()
-        docs = kb.query(state["alert_data"], k=3)
-        ctx = "\n---\n".join(
-            f"[知识来源: {d.metadata['source']}]\n{d.page_content}" for d in docs
-        )
+        try:
+            kb.load()
+            docs = kb.query(state["alert_data"], k=3)
+            ctx = "\n---\n".join(
+                f"[知识来源: {d.metadata['source']}]\n{d.page_content}" for d in docs
+            )
+        except Exception as e:
+            # DeepSeek 等非 OpenAI API 不支持 embedding，RAG 降级跳过
+            ctx = f"[RAG 检索跳过: {e}]"
         return {"rag_context": ctx}
 
     # ==================================================================
