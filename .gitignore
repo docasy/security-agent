@@ -21,6 +21,9 @@ chroma_db/
 temp/
 *.log
 
+# 生成的 HTML 报告
+*.html
+
 # OS
 .DS_Store
 Thumbs.db
