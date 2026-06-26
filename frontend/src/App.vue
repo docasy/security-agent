@@ -91,21 +91,29 @@ async function send() {
 
   try {
     if (isFirst) {
-      // First message: auto-detect intent
-      const isPentest = /扫描|渗透|端口|目标|攻击面|侦察|nmap|exploit/i.test(text)
-      const mode = isPentest ? 'pentest' : 'analyze'
+      // Three intent modes:
+      const isPentest = /扫描|渗透|端口|侦察|攻击面|nmap|目标.*(IP|ip|域名|扫描|测试)/i.test(text)
+      const isSecurity = /告警|入侵|攻击|病毒|恶意|威胁|漏洞|CVE|IOC|研判|误报|登录失败|异常|数据泄露|钓鱼|勒索|安全事件/i.test(text)
+      const mode = isPentest ? 'pentest' : (isSecurity ? 'analyze' : 'chat')
       thread.task_type = mode
 
-      const body = isPentest
-        ? JSON.stringify({ target: extractTarget(text) || text, task_type: 'pentest', thread_id: thread.id })
-        : JSON.stringify({ alert_data: text, task_type: 'alert', thread_id: thread.id })
-
-      const resp = await fetch(`${API}/${mode}/stream`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
-      })
+      let resp
+      if (mode === 'chat') {
+        resp = await fetch(`${API}/chat/stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text, thread_id: thread.id }),
+        })
+      } else {
+        const body = mode === 'pentest'
+          ? JSON.stringify({ target: extractTarget(text) || text, task_type: 'pentest', thread_id: thread.id })
+          : JSON.stringify({ alert_data: text, task_type: 'alert', thread_id: thread.id })
+        resp = await fetch(`${API}/${mode}/stream`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+        })
+      }
       await readStream(resp, streamMsg)
     } else {
-      // Follow-up: use /chat
       const resp = await api(`/chat/${thread.id}`, {
         method: 'POST',
         body: JSON.stringify({ message: text }),

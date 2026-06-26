@@ -260,6 +260,56 @@ async def _stream_workflow(task_type: str, thread_id: str, alert_data: str, targ
     })
 
 
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """
+    快速闲聊通道 —— 不跑安全分析工作流，直接调 LLM 流式回复。
+
+    当前端判断用户输入既不是渗透请求也不是安全告警时（比如"你好"、"你是什么"），
+    走这个快速通道，1-2 秒出回复，不触发 RAG/ReACT/响应计划/报告生成。
+    """
+    import os
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import SystemMessage, HumanMessage
+
+    model = ChatOpenAI(
+        model=os.getenv("LLM_MODEL", "deepseek-chat"),
+        temperature=0,
+    )
+
+    system = (
+        "你是 Security Agent，一个多智能体安全分析系统的 AI 助手。"
+        "你可以帮用户进行安全告警研判、渗透测试侦察、代码安全审计。"
+        "对于非安全相关的闲聊，友好简洁地回复，然后引导用户使用安全功能。"
+    )
+
+    async def generate():
+        # 先用 astream 做流式输出
+        full_content = ""
+        async for chunk in model.astream([
+            SystemMessage(content=system),
+            HumanMessage(content=req.message),
+        ]):
+            if chunk.content:
+                full_content += chunk.content
+                yield _sse_event({"type": "token", "content": chunk.content})
+
+        # 持久化
+        db = get_db()
+        db.save(AnalysisRecord(
+            task_type="chat", thread_id=req.thread_id,
+            input_data=req.message, analysis_result=full_content,
+        ))
+
+        yield _sse_event({"type": "done"})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.post("/analyze/stream")
 async def analyze_alert_stream(req: AlertRequest):
     """
