@@ -74,7 +74,7 @@ class ThreatAnalyzer:
         # 替代原来 6 行的简短 system prompt，获得完整的 AppSec 方法论
         return create_react_agent(
             self.model, self._tools,
-            state_modifier=self.system_prompt,  # ← 注入标准化 Skill
+            prompt=self.system_prompt,  # ← 注入标准化 Skill（LangGraph 1.2.6 参数名为 prompt）
         )
 
     @property

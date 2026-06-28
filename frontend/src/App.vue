@@ -11,6 +11,7 @@ const sidebarOpen = ref(true)
 // ===== Message input =====
 const input = ref('')
 const sending = ref(false)
+let abortController = null  // 用于停止正在进行的请求
 
 // ===== Helpers =====
 function api(path, opts = {}) {
@@ -68,6 +69,8 @@ async function send() {
   if (!text) return
   if (sending.value) return
 
+  abortController = new AbortController()
+  const signal = abortController.signal
   sending.value = true
 
   // Create thread if needed
@@ -100,7 +103,7 @@ async function send() {
       let resp
       if (mode === 'chat') {
         resp = await fetch(`${API}/chat/stream`, {
-          method: 'POST',
+          method: 'POST', signal,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: text, thread_id: thread.id }),
         })
@@ -109,7 +112,7 @@ async function send() {
           ? JSON.stringify({ target: extractTarget(text) || text, task_type: 'pentest', thread_id: thread.id })
           : JSON.stringify({ alert_data: text, task_type: 'alert', thread_id: thread.id })
         resp = await fetch(`${API}/${mode}/stream`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+          method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body,
         })
       }
       await readStream(resp, streamMsg)
@@ -122,13 +125,25 @@ async function send() {
       streamMsg.type = resp.routed_to_agent || 'chat'
     }
   } catch (e) {
-    streamMsg.content = '❌ ' + e.message
+    if (e.name === 'AbortError') {
+      streamMsg.content = streamMsg.content || '⏹ 已停止'
+    } else {
+      streamMsg.content = '❌ ' + e.message
+    }
     streamMsg.type = 'error'
   }
 
   sending.value = false
   // Reload threads to pick up new SQLite records
   setTimeout(loadThreads, 1000)
+}
+
+function stop() {
+  if (abortController) {
+    abortController.abort()
+    abortController = null
+    sending.value = false
+  }
 }
 
 function extractTarget(text) {
@@ -322,6 +337,10 @@ onMounted(loadThreads)
           :placeholder="sending ? 'Agent 正在分析中...' : (activeThread ? '追问...' : '输入 IP/域名 进行渗透测试，或粘贴告警进行研判...')"
           style="flex:1;padding:10px 16px;border-radius:10px;border:1px solid #334155;background:#111827;color:#e2e8f0;font-size:0.9em;outline:none"
         />
+        <button v-if="sending" @click="stop"
+          style="padding:10px 20px;border-radius:10px;border:none;background:#f87171;color:#fff;font-weight:600;cursor:pointer;font-size:0.88em">
+          ⏹ 停止
+        </button>
         <button @click="send" :disabled="sending"
           style="padding:10px 20px;border-radius:10px;border:none;background: sending ? '#334155' : '#38bdf8';color:sending ? '#64748b' : '#0b1120';font-weight:600;cursor:sending ? 'not-allowed' : 'pointer';font-size:0.88em">
           {{ sending ? '⏳' : '发送' }}
