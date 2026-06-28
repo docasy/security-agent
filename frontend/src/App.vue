@@ -50,8 +50,8 @@ async function loadThreads() {
           content: r.input_data,
         })
       }
-      // AI 回复
-      if (r.analysis_result) {
+      // AI 回复（跳过空内容，如被停止的请求）
+      if (r.analysis_result && r.analysis_result.trim()) {
         thread.messages.push({
           role: 'assistant',
           content: r.analysis_result,
@@ -317,16 +317,12 @@ onMounted(loadThreads)
             </span>
           </div>
 
-          <!-- Streaming token text -->
-          <div v-if="msg.content || (msg.toolCalls && msg.toolCalls.length>0) && !sending"
-            style="max-width:85%;padding:10px 16px;border-radius:12px 12px 12px 0;background:#111827;border:1px solid #1e293b;font-size:0.88em;line-height:1.7">
+          <!-- AI content (works for both streaming and history) -->
+          <div v-if="msg.content" style="max-width:85%;padding:10px 16px;border-radius:12px 12px 12px 0;background:#111827;border:1px solid #1e293b;font-size:0.88em;line-height:1.7">
             <pre style="white-space:pre-wrap;font-family:inherit;margin:0;line-height:1.75">{{ msg.content }}</pre>
-            <span v-if="sending" style="display:inline-block;width:8px;height:16px;background:#38bdf8;animation:blink 0.6s infinite;vertical-align:middle;margin-left:2px"></span>
           </div>
-
-          <!-- Static text content (non-streaming) -->
-          <div v-if="msg.content && msg.type !== 'streaming'" style="max-width:85%;padding:10px 16px;border-radius:12px 12px 12px 0;background:#111827;border:1px solid #1e293b;font-size:0.88em;line-height:1.7">
-            <pre style="white-space:pre-wrap;font-family:inherit;margin:0;line-height:1.75">{{ msg.content }}</pre>
+          <div v-else style="max-width:85%;padding:10px 16px;color:#64748b;font-size:0.85em">
+            (无内容)
           </div>
 
           <!-- Response plan collapsible -->
