@@ -432,10 +432,19 @@ async def chat_follow_up(thread_id: str, req: ChatRequest):
     reply = result.get("followup_reply", "无法生成回复")
     target_agent = result.get("followup_target_agent", "unknown")
 
+    # 持久化追问记录
+    db = get_db()
+    db.save(AnalysisRecord(
+        task_type=task_type,
+        thread_id=thread_id,
+        input_data=req.message,
+        analysis_result=reply,
+    ))
+
     return {
         "thread_id": thread_id,
         "question": req.message,
-        "routed_to_agent": target_agent,  # 告诉了用户追问给了哪个 Agent
+        "routed_to_agent": target_agent,
         "reply": reply,
         "previous_analysis_id": last.get("id"),
     }
