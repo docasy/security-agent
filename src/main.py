@@ -77,7 +77,8 @@ class AlertResponse(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., description="追问内容")
+    message: str = Field(..., description="消息内容")
+    thread_id: str = Field(default="default", description="会话 ID")
 
 
 class AnalysisListItem(BaseModel):
