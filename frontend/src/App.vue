@@ -67,7 +67,11 @@ async function loadThreads() {
 async function send() {
   const text = input.value.trim()
   if (!text) return
-  if (sending.value) return
+  // 如果有正在进行的请求，先停止
+  if (sending.value) {
+    if (abortController) abortController.abort()
+    sending.value = false
+  }
 
   abortController = new AbortController()
   const signal = abortController.signal
@@ -163,6 +167,8 @@ async function readStream(resp, streamMsg) {
   streamMsg.content = ''     // 累积 token
 
   while (true) {
+    // 检测停止按钮：用户点了停止就中止读取
+    if (abortController && abortController.signal.aborted) break
     const { done, value } = await reader.read()
     if (done) break
     buffer += decoder.decode(value, { stream: true })
