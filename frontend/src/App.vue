@@ -29,7 +29,7 @@ function genThreadId() {
 async function loadThreads() {
   try {
     const raw = await api('/analyses?limit=50')
-    // Group by thread_id
+    // Group by thread_id, reconstruct full conversation
     const map = {}
     for (const r of raw) {
       if (!map[r.thread_id]) {
@@ -42,9 +42,17 @@ async function loadThreads() {
           createdAt: r.created_at,
         }
       }
-      // Add analysis result as assistant message
+      const thread = map[r.thread_id]
+      // 用户消息（input_data 就是用户输入的内容）
+      if (r.input_data) {
+        thread.messages.push({
+          role: 'user',
+          content: r.input_data,
+        })
+      }
+      // AI 回复
       if (r.analysis_result) {
-        map[r.thread_id].messages.push({
+        thread.messages.push({
           role: 'assistant',
           content: r.analysis_result,
           type: r.task_type,
@@ -54,6 +62,7 @@ async function loadThreads() {
           createdAt: r.created_at,
         })
       }
+      if (r.id > thread.lastId) thread.lastId = r.id
     }
     threads.value = Object.values(map).sort((a, b) => b.lastId - a.lastId)
     // Auto-select latest
